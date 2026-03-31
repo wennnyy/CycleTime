@@ -1,0 +1,162 @@
+{% extends 'base_admin.html' %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-4">User Management</h2>
+
+    <!-- Statistics -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        
+        <div class="bg-white shadow rounded-lg p-6 border-l-4 border-blue-500">
+            <p class="text-sm text-gray-500">Total Admin</p>
+            <h3 class="text-2xl font-bold text-gray-800">{{ total_admin }}</h3>
+        </div>
+
+        <div class="bg-white shadow rounded-lg p-6 border-l-4 border-green-500">
+            <p class="text-sm text-gray-500">Total Staff</p>
+            <h3 class="text-2xl font-bold text-gray-800">{{ total_staff }}</h3>
+        </div>
+
+        <div class="bg-white shadow rounded-lg p-6 border-l-4 border-purple-500">
+            <p class="text-sm text-gray-500">Total Management</p>
+            <h3 class="text-2xl font-bold text-gray-800">{{ total_management }}</h3>
+        </div>
+
+    </div>
+
+    <!-- Add Button -->
+    <div class="mb-4">
+        <button onclick="document.getElementById('addModal').classList.remove('hidden')"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
+            + Add User
+        </button>
+    </div>
+
+    <!-- Table -->
+    <div class="bg-white shadow rounded-lg overflow-x-auto">
+        <table class="w-full text-sm text-left text-gray-600">
+            <thead class="bg-gray-100 text-xs uppercase">
+                <tr>
+                    <th class="px-6 py-3">No</th>
+                    <th class="px-6 py-3">Username</th>
+                    <th class="px-6 py-3">Email</th>
+                    <th class="px-6 py-3">Role</th>
+                    <th class="px-6 py-3">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for members in manage_user %}
+                <tr class="border-b hover:bg-gray-50">
+                    <td class="px-6 py-3">{{ forloop.counter }}</td>
+                    <td class="px-6 py-3 font-medium">{{ members.username }}</td>
+                    <td class="px-6 py-3">{{ members.email }}</td>
+                    <td class="px-6 py-3 capitalize">{{ members.role }}</td>
+                    <td class="px-6 py-3 space-x-2">
+                        <button onclick="document.getElementById('editModal{{ members.id }}').classList.remove('hidden')"
+                                class="text-green-600 hover:underline">
+                            Edit
+                        </button>
+
+                        <a href="{% url 'delete_user' members.id %}"
+                           class="text-red-600 hover:underline"
+                           onclick="return confirm('Delete this user?')">
+                            Delete
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center py-6 text-gray-400">
+                        No users found
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+</div>
+
+
+<!-- ================= ADD MODAL ================= -->
+<div id="addModal" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center">
+    <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+        <h3 class="text-lg font-bold mb-4">Add User</h3>
+
+        <form method="POST" action="{% url 'add_user' %}" class="space-y-3">
+            {% csrf_token %}
+
+            <input type="text" name="username" placeholder="Username"
+                   class="w-full border rounded p-2" required>
+
+            <input type="email" name="email" placeholder="Email"
+                   class="w-full border rounded p-2">
+
+            <input type="password" name="password" placeholder="Password"
+                   class="w-full border rounded p-2" required>
+
+            <select name="role" class="w-full border rounded p-2">
+                <option value="admin">Admin</option>
+                <option value="staff">Staff</option>
+                <option value="management">Management</option>
+            </select>
+
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button"
+                        onclick="document.getElementById('addModal').classList.add('hidden')"
+                        class="px-4 py-2 bg-gray-300 rounded">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-blue-600 text-white rounded">
+                    Save
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+
+<!-- ================= EDIT MODALS ================= -->
+{% for members in manage_user %}
+<div id="editModal{{ members.id }}" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center">
+    <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+        <h3 class="text-lg font-bold mb-4">Edit User</h3>
+
+        <form method="POST" action="{% url 'edit_user' members.id %}" class="space-y-3">
+            {% csrf_token %}
+
+            <input type="text" name="username"
+                   value="{{ members.username }}"
+                   class="w-full border rounded p-2" required>
+
+            <input type="email" name="email"
+                   value="{{ members.email }}"
+                   class="w-full border rounded p-2">
+
+            <input type="password" name="password"
+                   placeholder="Leave blank if not changed"
+                   class="w-full border rounded p-2">
+
+            <select name="role" class="w-full border rounded p-2">
+                <option value="admin" {% if members.role == 'admin' %}selected{% endif %}>Admin</option>
+                <option value="staff" {% if members.role == 'staff' %}selected{% endif %}>Staff</option>
+                <option value="management" {% if members.role == 'management' %}selected{% endif %}>Management</option>
+            </select>
+
+            <div class="flex justify-end gap-2 pt-2">
+                <button type="button"
+                        onclick="document.getElementById('editModal{{ members.id }}').classList.add('hidden')"
+                        class="px-4 py-2 bg-gray-300 rounded">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-green-600 text-white rounded">
+                    Update
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endfor %}
+
+{% endblock %}

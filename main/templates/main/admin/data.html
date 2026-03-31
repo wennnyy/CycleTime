@@ -1,0 +1,247 @@
+{% extends 'base_admin.html' %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-2">Data Management</h2>
+<p class="text-sm text-gray-500 mb-6">
+    Manage and resolve flagged tickets from synchronization data.
+</p>
+
+{% if messages %}
+    {% for message in messages %}
+        <div class="mb-4 p-3 rounded text-sm
+            {% if message.tags == 'success' %}bg-green-100 text-green-700 border border-green-300
+            {% else %}bg-red-100 text-red-700 border border-red-300{% endif %}">
+            {{ message }}
+        </div>
+    {% endfor %}
+{% endif %}
+
+<div class="bg-white p-6 rounded shadow">
+
+    <!-- Search & Filter -->
+    <form method="get" class="flex flex-wrap gap-3 mb-5" id="filterForm">
+        <input type="text"
+               name="q"
+               value="{{ query }}"
+               placeholder="Search Ticket ID..."
+               class="border border-gray-300 rounded px-3 py-2 text-sm w-56">
+
+        <select name="per_page"
+                class="border border-gray-300 rounded px-3 py-2 text-sm"
+                onchange="this.form.submit()">
+            <option value="10"  {% if per_page == 10  %}selected{% endif %}>10 / page</option>
+            <option value="25"  {% if per_page == 25  %}selected{% endif %}>25 / page</option>
+            <option value="50"  {% if per_page == 50  %}selected{% endif %}>50 / page</option>
+            <option value="100" {% if per_page == 100 %}selected{% endif %}>100 / page</option>
+        </select>
+
+        <button type="submit" class="bg-black text-white px-4 py-2 rounded text-sm">
+            Search
+        </button>
+
+        {% if query %}
+        <a href="{% url 'admin_data' %}"
+           class="border border-gray-300 px-4 py-2 rounded text-sm text-gray-600 hover:bg-gray-50">
+            Reset
+        </a>
+        {% endif %}
+    </form>
+
+    <!-- Showing X to Y -->
+    <p class="text-sm text-gray-500 mb-3">
+        Showing <strong>{{ start_index }}</strong> to
+        <strong>{{ end_index }}</strong> of
+        <strong>{{ total_filtered }}</strong> flagged entries
+        {% if query %}(filtered){% endif %}
+    </p>
+
+    <!-- Table -->
+    <div class="overflow-x-auto">
+        <table class="w-full border text-sm">
+            <thead class="bg-gray-100">
+                <tr>
+                    <th class="p-2 border text-left">No</th>
+                    <th class="p-2 border text-left">Ticket ID</th>
+                    <th class="p-2 border text-left">Package</th>
+                    <th class="p-2 border text-left">Platform</th>
+                    <th class="p-2 border text-left">Predefined Process</th>
+                    <th class="p-2 border text-left">Process Stage</th>
+                    <th class="p-2 border text-left">Process Area</th>
+                    <th class="p-2 border text-left">Start Date</th>
+                    <th class="p-2 border text-left">Due Date</th>
+                    <th class="p-2 border text-left">CT (days)</th>
+                    <th class="p-2 border text-left">Status</th>
+                    <th class="p-2 border text-left">Reason</th>
+                    <th class="p-2 border text-left">Flagged By</th>
+                    <th class="p-2 border text-left">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in data %}
+                <tr class="hover:bg-gray-50 bg-red-50">
+                    <td class="p-2 border text-xs text-gray-400">{{ start_index|add:forloop.counter0 }}</td>
+                    <td class="p-2 border text-xs">{{ item.ticket_key }}</td>
+                    <td class="p-2 border text-xs">{{ item.platform|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.platform_group|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.predefined_process|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.process_stage|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.process_area|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.start_date|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.due_date|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.cycle_time|floatformat:1|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.status }}</td>
+                    <td class="p-2 border text-xs">{{ item.error_message|default:"—"|truncatechars:50 }}</td>
+                    <td class="p-2 border text-xs">{{ item.flagged_by|default:"—" }}</td>
+                    <td class="p-2 border text-center">
+                        <div class="flex gap-1 justify-center">
+                            <!-- Edit -->
+                            <button onclick="openEditModal('{{ item.ticket_key }}', '{{ item.start_date|default:'' }}', '{{ item.due_date|default:'' }}', '{{ item.predefined_process|default:'' }}')"
+                                    class="px-2 py-1 rounded text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-300 font-medium">
+                                Edit
+                            </button>
+                            <!-- Resolve -->
+                            <form method="post" style="display:inline"
+                                  onsubmit="return confirm('Resolve ticket {{ item.ticket_key }}? Flag will be removed.')">
+                                {% csrf_token %}
+                                <input type="hidden" name="action"     value="resolve">
+                                <input type="hidden" name="ticket_key" value="{{ item.ticket_key }}">
+                                <button type="submit"
+                                        class="px-2 py-1 rounded text-xs bg-green-100 text-green-700 hover:bg-green-200 border border-green-300 font-medium">
+                                    Resolve
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="14" class="p-8 text-center text-gray-400">
+                        No flagged tickets. All data looks good! ✓
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if paginator.num_pages > 1 %}
+    <div class="flex flex-col sm:flex-row items-center justify-between mt-5 gap-3">
+        <p class="text-sm text-gray-500">
+            Showing <strong>{{ start_index }}</strong> to
+            <strong>{{ end_index }}</strong> of
+            <strong>{{ total_filtered }}</strong> entries
+        </p>
+        <div class="flex items-center gap-1">
+            {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&q={{ query }}&per_page={{ per_page }}"
+               class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">Previous</a>
+            {% else %}
+            <span class="px-3 py-1.5 border border-gray-200 rounded text-sm text-gray-300 cursor-not-allowed">Previous</span>
+            {% endif %}
+
+            {% for p in page_range %}
+                {% if p == '...' %}
+                <span class="px-3 py-1.5 text-sm text-gray-400">...</span>
+                {% elif p == page_obj.number %}
+                <span class="px-3 py-1.5 border border-gray-800 bg-black text-white rounded text-sm font-semibold">{{ p }}</span>
+                {% else %}
+                <a href="?page={{ p }}&q={{ query }}&per_page={{ per_page }}"
+                   class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
+                {% endif %}
+            {% endfor %}
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&q={{ query }}&per_page={{ per_page }}"
+               class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">Next</a>
+            {% else %}
+            <span class="px-3 py-1.5 border border-gray-200 rounded text-sm text-gray-300 cursor-not-allowed">Next</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+
+<!-- ═══════════════════════════════
+     MODAL EDIT TICKET
+     ═══════════════════════════════ -->
+<div id="editModal"
+     class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+        <h3 class="font-semibold text-gray-800 mb-1">Edit Ticket</h3>
+        <p class="text-sm text-gray-500 mb-4">
+            Editing: <strong id="editTicketKeyLabel"></strong>
+        </p>
+
+        <form method="post" id="editForm">
+            {% csrf_token %}
+            <input type="hidden" name="action"     value="edit">
+            <input type="hidden" name="ticket_key" id="editTicketKey">
+
+            <div class="mb-3">
+                <label class="text-sm text-gray-600 block mb-1">Start Date</label>
+                <input type="date" name="start_date" id="editStartDate"
+                       class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+            </div>
+
+            <div class="mb-3">
+                <label class="text-sm text-gray-600 block mb-1">Due Date</label>
+                <input type="date" name="due_date" id="editDueDate"
+                       class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+            </div>
+
+            <div class="mb-4">
+                <label class="text-sm text-gray-600 block mb-1">Process</label>
+                <select name="predefined_process" id="editProcess"
+                        class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+                    <option value="">— Select Process —</option>
+                    <option value="Die Attach">Die Attach</option>
+                    <option value="Wire Bond">Wire Bond</option>
+                    <option value="Mold">Mold</option>
+                    <option value="Trim & Form">Trim & Form</option>
+                    <option value="Marking">Marking</option>
+                    <option value="Final Test">Final Test</option>
+                    <option value="Visual Inspection">Visual Inspection</option>
+                    <option value="X-Ray Inspection">X-Ray Inspection</option>
+                    <option value="Tape & Reel">Tape & Reel</option>
+                </select>
+            </div>
+
+            <div class="flex gap-2 justify-end">
+                <button type="button"
+                        onclick="closeEditModal()"
+                        class="px-4 py-2 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+                    Save Changes
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+
+<script>
+function openEditModal(ticketKey, startDate, dueDate, process) {
+    document.getElementById('editModal').classList.remove('hidden');
+    document.getElementById('editTicketKeyLabel').textContent = ticketKey;
+    document.getElementById('editTicketKey').value            = ticketKey;
+    document.getElementById('editStartDate').value            = startDate;
+    document.getElementById('editDueDate').value              = dueDate;
+    document.getElementById('editProcess').value              = process;
+}
+
+function closeEditModal() {
+    document.getElementById('editModal').classList.add('hidden');
+}
+
+document.getElementById('editModal').addEventListener('click', function(e) {
+    if (e.target === this) closeEditModal();
+});
+</script>
+
+{% endblock %}

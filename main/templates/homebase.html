@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Cycle Time System{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-100 min-h-screen">
+
+<!-- ── Navbar ─────────────────────────────────────────────── -->
+<nav class="bg-green-800 text-white shadow-md fixed top-0 left-0 right-0 z-50">
+    <div class="max-w-screen-xl mx-auto px-6 flex items-center justify-between h-14">
+
+        <!-- Logo -->
+        <div class="flex items-center gap-3">
+            <span class="font-bold text-base">Cycle Time System</span>
+            <span class="text-green-300 text-xs hidden sm:inline">| Infineon Batam</span>
+        </div>
+
+        <!-- Menu Links -->
+        <div class="hidden md:flex items-center gap-1">
+
+            {% if request.user.role == 'staff' %}
+                <a href="{% url 'dashboard_staff' %}"
+                   class="px-4 py-2 rounded text-sm font-medium transition-colors
+                   {% if request.path == '/dashboard/staff/' %}bg-black text-white{% else %}hover:bg-green-700 text-green-100{% endif %}">
+                    Dashboard
+                </a>
+                <a href="{% url 'staff_view_data' %}"
+                   class="px-4 py-2 rounded text-sm font-medium transition-colors
+                   {% if request.path == '/dashboard/staff/view-data/' %}bg-black text-white{% else %}hover:bg-green-700 text-green-100{% endif %}">
+                    View Data
+                </a>
+                <a href="{% url 'staff_reports' %}"
+                   class="px-4 py-2 rounded text-sm font-medium transition-colors
+                   {% if request.path == '/dashboard/staff/reports/' %}bg-black text-white{% else %}hover:bg-green-700 text-green-100{% endif %}">
+                    Reports
+                </a>
+
+            {% elif request.user.role == 'management' %}
+                <a href="{% url 'dashboard_management' %}"
+                   class="px-4 py-2 rounded text-sm font-medium transition-colors
+                   {% if request.path == '/dashboard/management/' %}bg-black text-white{% else %}hover:bg-green-700 text-green-100{% endif %}">
+                    Dashboard
+                </a>
+                <a href="{% url 'management_reports' %}"
+                   class="px-4 py-2 rounded text-sm font-medium transition-colors
+                   {% if request.path == '/dashboard/management/reports/' %}bg-black text-white{% else %}hover:bg-green-700 text-green-100{% endif %}">
+                    Reports
+                </a>
+            {% endif %}
+
+        </div>
+
+        <!-- User Info + Logout -->
+        <div class="flex items-center gap-4">
+            <div class="hidden sm:flex flex-col items-end">
+                <span class="text-sm font-semibold leading-tight">{{ request.user.username }}</span>
+                <span class="text-xs text-green-300 leading-tight capitalize">{{ request.user.role }}</span>
+            </div>
+            <a href="{% url 'logout' %}"
+               class="text-xs border border-green-500 px-3 py-1.5 rounded hover:bg-green-700 transition-colors">
+                Logout
+            </a>
+
+            <!-- Hamburger mobile -->
+            <button onclick="toggleMobileMenu()"
+                    class="md:hidden p-1.5 rounded hover:bg-green-700">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none"
+                     viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M4 6h16M4 12h16M4 18h16"/>
+                </svg>
+            </button>
+        </div>
+
+    </div>
+
+    <!-- Mobile Menu -->
+    <div id="mobileMenu" class="hidden md:hidden border-t border-green-700 px-4 py-2 space-y-1">
+
+        {% if request.user.role == 'staff' %}
+            <a href="{% url 'dashboard_staff' %}"
+               class="block px-3 py-2 rounded text-sm
+               {% if request.path == '/dashboard/staff/' %}bg-black text-white{% else %}hover:bg-green-700{% endif %}">
+                Dashboard
+            </a>
+            <a href="{% url 'staff_view_data' %}"
+               class="block px-3 py-2 rounded text-sm
+               {% if request.path == '/dashboard/staff/view-data/' %}bg-black text-white{% else %}hover:bg-green-700{% endif %}">
+                View Data
+            </a>
+            <a href="{% url 'staff_reports' %}"
+               class="block px-3 py-2 rounded text-sm
+               {% if request.path == '/dashboard/staff/reports/' %}bg-black text-white{% else %}hover:bg-green-700{% endif %}">
+                Reports
+            </a>
+
+        {% elif request.user.role == 'management' %}
+            <a href="{% url 'dashboard_management' %}"
+               class="block px-3 py-2 rounded text-sm
+               {% if request.path == '/dashboard/management/' %}bg-black text-white{% else %}hover:bg-green-700{% endif %}">
+                Dashboard
+            </a>
+            <a href="{% url 'management_reports' %}"
+               class="block px-3 py-2 rounded text-sm
+               {% if request.path == '/dashboard/management/reports/' %}bg-black text-white{% else %}hover:bg-green-700{% endif %}">
+                Reports
+            </a>
+        {% endif %}
+
+        <div class="pt-2 pb-1 border-t border-green-700 text-xs text-green-300">
+            {{ request.user.username }} · {{ request.user.role }}
+        </div>
+    </div>
+</nav>
+
+<!-- ── Main Content ───────────────────────────────────────── -->
+<main class="pt-20 px-6 md:px-10 pb-10 max-w-screen-xl mx-auto">
+    {% block content %}
+    {% endblock %}
+</main>
+
+<script>
+function toggleMobileMenu() {
+    const menu = document.getElementById('mobileMenu');
+    menu.classList.toggle('hidden');
+}
+</script>
+
+</body>
+</html>

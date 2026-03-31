@@ -1,0 +1,65 @@
+from django.shortcuts import render, redirect
+from django.contrib.auth import authenticate, login, logout
+from django.contrib import messages
+from django.contrib.auth.forms import AuthenticationForm
+from django.http import HttpResponse
+
+def login_view(request):
+    # Jika sudah login, langsung redirect ke dashboard sesuai role
+    if request.user.is_authenticated:
+        return redirect_based_on_role(request.user)
+
+    if request.method == 'POST':
+        form = AuthenticationForm(request, data=request.POST)
+        if form.is_valid():
+            username = form.cleaned_data.get('username')
+            password = form.cleaned_data.get('password')
+            user = authenticate(request, username=username, password=password)
+            
+            if user is not None:
+                login(request, user)
+                messages.success(request, f"Selamat datang, {user.username}!")
+                return redirect_based_on_role(user)
+            else:
+                messages.error(request, "Username atau password salah.")
+        else:
+            messages.error(request, "Form tidak valid. Periksa kembali input Anda.")
+    else:
+        form = AuthenticationForm()
+
+    return render(request, 'main/auth/login.html', {
+        'form': form,
+        'title': 'Login - Pengolahan Data Cycle Time'
+    })
+
+
+def logout_view(request):
+    logout(request)
+    messages.info(request, "Anda telah logout.")
+    return redirect('main:login')  # menggunakan namespacing app_name
+
+
+def redirect_based_on_role(user):
+    """
+    Redirect ke dashboard berdasarkan role pengguna
+    """
+    if user.role == 'admin':
+        return redirect('main:dashboard_admin')
+    elif user.role == 'staff':
+        return redirect('main:dashboard_staff')
+    elif user.role == 'management':
+        return redirect('main:dashboard_management')
+    else:
+        # fallback jika role tidak dikenali
+        return redirect('main:login')
+
+
+# Placeholder dashboard (akan diganti nanti dengan template sebenarnya)
+def dashboard_admin(request):
+    return HttpResponse("Selamat datang di Dashboard Admin!")
+
+def dashboard_staff(request):
+    return HttpResponse("Selamat datang di Dashboard Staf Development!")
+
+def dashboard_management(request):
+    return HttpResponse("Selamat datang di Dashboard Manajemen!")

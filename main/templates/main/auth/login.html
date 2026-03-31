@@ -1,0 +1,54 @@
+{% extends "main/auth/loginbase.html" %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<div class="w-full px-4">
+    <div class="mx-auto max-w-sm bg-white/50 backdrop-blur-md rounded-2xl shadow-xl p-6 sm:p-8">
+
+        <!-- Logo -->
+        <div class="flex justify-center mb-4">
+            <img src="/static/images/infi.webp" alt="Logo" class="h-10">
+        </div>
+
+        <!-- Title -->
+        <div class="text-center mb-6">
+            <h1 class="text-gray-800 text-lg font-semibold leading-snug">
+                Cycle Time Data <br>
+                Processing System
+            </h1>
+        </div>
+
+        <!-- Form -->
+        <form method="post" class="space-y-4">
+                {% csrf_token %}
+            <input
+                type="text"
+                name="username"
+                placeholder="Username"
+                class="w-full rounded-lg bg-white/90 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+            >
+
+            <input
+                type="password"
+                name="password"
+                placeholder="Password"
+                class="w-full rounded-lg bg-white/90 px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+            >
+
+            <button
+                type="submit"
+                class="w-full bg-green-700 hover:bg-green-700 text-white font-medium py-2 rounded-lg transition">
+                Login
+            </button>
+        </form>
+
+        <!-- Forgot password -->
+        <div class="text-center mt-4">
+            <a href="#" class="text-sm text-gray-600 hover:underline">
+                Lupa Password?
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

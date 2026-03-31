@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Pengolahan Cycle Time</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    {% load static %}
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        .bg-image {
+            background-image: url('{% static "images/image1.jpeg" %}');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .login-card {
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(10px);
+            border-radius: 1rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            padding: 2rem 1.5rem;
+            width: 100%;
+            max-width: 360px;
+            text-align: center;
+        }
+        .input-field {
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 0.5rem;
+            padding: 0.75rem 1rem;
+            width: 100%;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            color: #1f2937;
+        }
+        .input-field::placeholder {
+            color: #9ca3af;
+        }
+        .input-field:focus {
+            outline: none;
+            border-color: #10b981;
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+        }
+        .btn-login {
+            background: #10b981;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            transition: all 0.3s;
+            font-size: 0.95rem;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+        }
+        .btn-login:hover {
+            background: #059669;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+        .title-text {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #ffffff;
+            line-height: 1.4;
+            margin-bottom: 1.5rem;
+        }
+        .message-box {
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            font-size: 0.85rem;
+        }
+        .message-success {
+            background: rgba(16, 185, 129, 0.2);
+            color: #10b981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        .message-error {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .forgot-link {
+            color: #10b981;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.85rem;
+            transition: color 0.2s;
+        }
+        .forgot-link:hover {
+            color: #059669;
+            text-decoration: underline;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 640px) {
+            .login-card {
+                padding: 1.75rem 1.25rem;
+                max-width: 95%;
+                margin: 0 auto;
+            }
+            .title-text {
+                font-size: 1.25rem;
+                margin-bottom: 1.25rem;
+            }
+            .input-field {
+                font-size: 0.875rem;
+                padding: 0.65rem 0.875rem;
+            }
+            .btn-login {
+                padding: 0.65rem;
+                font-size: 0.875rem;
+            }
+        }
+
+        @media (max-width: 400px) {
+            .login-card {
+                max-width: 100%;
+                padding: 1.5rem 1rem;
+            }
+            .title-text {
+                font-size: 1.15rem;
+            }
+        }
+
+        @media (min-width: 641px) and (max-width: 1024px) {
+            .login-card {
+                max-width: 380px;
+            }
+        }
+
+        @media (min-width: 1025px) {
+            .login-card {
+                max-width: 360px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-image">
+        <div class="login-card">
+            <!-- Logo Infineon -->
+            <img src="{% static 'images/infi.webp' %}" alt="Infineon" class="mx-auto mb-6 h-8 w-auto" style="filter: brightness(0) invert(1);">
+
+            <!-- Judul dengan styling konsisten -->
+            <h1 class="title-text">
+                Sistem Pengolahan Data<br>Cycle Time
+            </h1>
+
+            <!-- Pesan error/success -->
+            {% if messages %}
+                <div class="space-y-2">
+                    {% for message in messages %}
+                        <div class="message-box {% if message.tags == 'success' %}message-success{% else %}message-error{% endif %}">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <form method="post" class="space-y-4">
+                {% csrf_token %}
+
+                <div>
+                    <input type="text" name="username" class="input-field" placeholder="Username" required autofocus>
+                </div>
+
+                <div>
+                    <input type="password" name="password" class="input-field" placeholder="Password" required>
+                </div>
+
+                <button type="submit" class="btn-login">
+                    Login
+                </button>
+            </form>
+
+            <p class="mt-5">
+                <a href="#" class="forgot-link">Lupa Password?</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>
