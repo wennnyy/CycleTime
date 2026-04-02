@@ -8,17 +8,15 @@ from django.db import models
 class JiraMainTicket(models.Model):
     """
     Main Ticket dari DEVSMETS/JIRA
-    Status: hanya Closed
+    Status: selalu Closed
     """
-    STATUS_CHOICES = [
-        ('Closed', 'Closed'),
-    ]
+    STATUS_CHOICES = [('Closed', 'Closed')]
 
     issue_key        = models.CharField(max_length=50, unique=True)
     status           = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Closed')
     created          = models.DateField()
     package          = models.CharField(max_length=100)
-    process_required = models.JSONField()
+    process_required = models.JSONField(default=list)   # list of process names
 
     class Meta:
         db_table = 'jira_main_ticket'
@@ -31,12 +29,10 @@ class JiraMainTicket(models.Model):
 class JiraSubTicket(models.Model):
     """
     Sub Ticket dari DEVSMETS/JIRA
-    Turunan dari MainTicket berdasarkan process_required
-    Status: hanya Completed
+    - start_date selalu benar
+    - due_date bisa sengaja salah (error injection → CT negatif)
     """
-    STATUS_CHOICES = [
-        ('Completed', 'Completed'),
-    ]
+    STATUS_CHOICES = [('Completed', 'Completed'), ('In Progress', 'In Progress')]
 
     issue_key          = models.CharField(max_length=60, unique=True)
     parent_key         = models.ForeignKey(

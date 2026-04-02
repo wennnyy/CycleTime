@@ -11,7 +11,19 @@
 #   - Status sub ticket     : Completed / In Progress (sesuai tanggal)
 #   - Package               : 13 jenis
 #   - Predefined Process    : 45 jenis
-#   - Rentang data          : April 2024 — Maret 2026
+#   - Rentang data          : Januari 2024 — Desember 2026
+#
+# Perubahan v4:
+#   - Rentang diperluas ke 12 bulan penuh untuk 2024 dan 2026
+# (sebelumnya v3):
+#   - Durasi proses mayoritas 1 hari (distribusi berbobot ~70% ke 1 hari)
+#   - Max durasi proses ringan : 3 hari
+#   - Max durasi proses berat  : 10 hari (Burn-In, Temperature Cycling, dll)
+#   - Error inject             : TEPAT 1-3 sub-ticket per bulan
+#       Tipe A : due_date SEBELUM start_date, bulan SAMA
+#                cth: start 9 Jan 2026 -> due 5 Jan 2026  (CT = -4 hari)
+#       Tipe B : due_date di bulan SEBELUMNYA
+#                cth: start 9 Feb 2026 -> due 10 Jan 2026 (CT = -30 hari)
 # ============================================================
 
 import random
@@ -100,53 +112,59 @@ CORE_PROCESSES = [
     "Visual Inspection",
 ]
 
-# Durasi tiap proses (min_hari, max_hari)
+# ── Durasi tiap proses (min_hari, max_hari) ──────────────────
+# Proses ringan/inspeksi : max 3-5 hari
+# Proses berat/uji panjang: max 7-10 hari
+# Min selalu 1 hari; mayoritas tetap 1 hari lewat random_duration()
+
 PROCESS_DURATION = {
-    "Wafer Incoming Inspection":        (1, 2),
-    "Wafer Backgrinding":               (1, 3),
-    "Wafer Mounting":                   (1, 2),
-    "Wafer Sawing":                     (1, 2),
-    "Die Inspection":                   (1, 2),
-    "Die Attach":                       (1, 3),
-    "Die Attach Cure":                  (1, 2),
-    "Wire Bond":                        (2, 5),
-    "Wire Bond Inspection":             (1, 2),
-    "Mold":                             (1, 4),
-    "Mold Cure":                        (1, 2),
-    "Dejunk & Trim":                    (1, 2),
-    "Trim & Form":                      (1, 3),
-    "Singulation":                      (1, 2),
-    "Marking":                          (1, 2),
-    "Marking Inspection":               (1, 2),
-    "Plating":                          (2, 4),
-    "Plating Inspection":               (1, 2),
-    "Lead Finish":                      (1, 3),
-    "Ball Mount (BGA)":                 (1, 3),
-    "Ball Attach Reflow":               (1, 2),
-    "Flux Cleaning":                    (1, 2),
-    "X-Ray Inspection":                 (1, 3),
-    "Visual Inspection":                (1, 3),
-    "Automated Optical Inspection (AOI)":(1, 2),
-    "Electrical Test (ET)":             (2, 4),
-    "Final Test":                       (2, 6),
-    "Burn-In Test":                     (2, 5),
-    "High Temperature Storage (HTS)":   (2, 5),
-    "Temperature Cycling Test":         (3, 7),
-    "Moisture Sensitivity Test":        (2, 5),
-    "Board Level Reliability Test":     (3, 7),
-    "ESD Test":                         (1, 3),
-    "Solderability Test":               (1, 3),
-    "Package Integrity Test":           (1, 3),
-    "Leak Test":                        (1, 2),
-    "Tape & Reel":                      (1, 2),
-    "Tray Packing":                     (1, 2),
-    "Tube Packing":                     (1, 2),
-    "Label & Barcode":                  (1, 1),
-    "Outgoing Quality Control (OQC)":   (1, 2),
-    "Dry Pack":                         (1, 2),
-    "Humidity Indicator Check":         (1, 1),
-    "Documentation Review":             (1, 2),
-    "Shipment Preparation":             (1, 2),
+    # ── Proses ringan / inspeksi ─────────────────────────────
+    "Wafer Incoming Inspection":         (1, 3),
+    "Wafer Backgrinding":                (1, 3),
+    "Wafer Mounting":                    (1, 3),
+    "Wafer Sawing":                      (1, 3),
+    "Die Inspection":                    (1, 3),
+    "Die Attach":                        (1, 3),
+    "Die Attach Cure":                   (1, 3),
+    "Wire Bond":                         (1, 5),
+    "Wire Bond Inspection":              (1, 3),
+    "Mold":                              (1, 3),
+    "Mold Cure":                         (1, 3),
+    "Dejunk & Trim":                     (1, 3),
+    "Trim & Form":                       (1, 3),
+    "Singulation":                       (1, 3),
+    "Marking":                           (1, 3),
+    "Marking Inspection":                (1, 3),
+    "Plating":                           (1, 5),
+    "Plating Inspection":                (1, 3),
+    "Lead Finish":                       (1, 3),
+    "Ball Mount (BGA)":                  (1, 3),
+    "Ball Attach Reflow":                (1, 3),
+    "Flux Cleaning":                     (1, 3),
+    "X-Ray Inspection":                  (1, 3),
+    "Visual Inspection":                 (1, 3),
+    "Automated Optical Inspection (AOI)":(1, 3),
+    "Electrical Test (ET)":              (1, 5),
+    # ── Proses berat / uji panjang (bisa sampai 10 hari) ─────
+    "Final Test":                        (1, 7),
+    "Burn-In Test":                      (1, 10),
+    "High Temperature Storage (HTS)":    (1, 10),
+    "Temperature Cycling Test":          (1, 10),
+    "Moisture Sensitivity Test":         (1, 7),
+    "Board Level Reliability Test":      (1, 10),
+    "ESD Test":                          (1, 3),
+    "Solderability Test":                (1, 3),
+    "Package Integrity Test":            (1, 3),
+    "Leak Test":                         (1, 3),
+    "Tape & Reel":                       (1, 3),
+    "Tray Packing":                      (1, 3),
+    "Tube Packing":                      (1, 3),
+    "Label & Barcode":                   (1, 1),
+    "Outgoing Quality Control (OQC)":    (1, 3),
+    "Dry Pack":                          (1, 3),
+    "Humidity Indicator Check":          (1, 1),
+    "Documentation Review":              (1, 3),
+    "Shipment Preparation":              (1, 3),
 }
 
 
@@ -157,9 +175,75 @@ MAIN_PER_MONTH_MAX = 35
 SUB_PER_MONTH_MIN  = 350
 SUB_PER_MONTH_MAX  = 450
 
+# ── Jumlah error yang di-inject TEPAT per bulan ──────────────
+# Setiap bulan akan ada tepat 1-3 sub-ticket Completed
+# yang due_date-nya sengaja dibuat salah (lebih kecil dari start_date)
+ERROR_PER_MONTH_MIN = 1
+ERROR_PER_MONTH_MAX = 3
 
 # ── Tanggal hari ini sebagai batas status ─────────────────────
 TODAY = date.today()
+
+
+# ── Helper: durasi dengan bias kuat ke 1 hari ────────────────
+
+def random_duration(min_d, max_d):
+    """
+    Distribusi berbobot — 1 hari mendominasi meskipun range lebar:
+      1 hari  : bobot 7  (~70%)
+      2 hari  : bobot 2  (~20%)
+      3+ hari : bobot 1 masing-masing (~10% dibagi sisa range)
+
+    Contoh pool untuk (1, 10):
+      [1,1,1,1,1,1,1,  2,2,  3,4,5,6,7,8,9,10]
+      Pilih 1 secara random → 1 hari tetap paling sering keluar.
+    """
+    if min_d == max_d:
+        return min_d
+    pool = []
+    for day in range(min_d, max_d + 1):
+        if day == 1:
+            pool.extend([1] * 7)
+        elif day == 2:
+            pool.extend([2] * 2)
+        else:
+            pool.append(day)
+    return random.choice(pool)
+
+
+# ── Helper: inject error tanggal ─────────────────────────────
+
+def inject_date_error(start_date, due_date):
+    """
+    Kembalikan (start_date, due_date_salah).
+    start_date selalu benar — hanya due_date yang salah input.
+
+    Tipe A — due_date mundur 2-10 hari, masih bulan yang sama:
+        start : 9 Januari 2026
+        due   : 5 Januari 2026   (CT = -4 hari)
+
+    Tipe B — due_date mundur 30-45 hari (pindah bulan):
+        start : 9 Februari 2026
+        due   : 10 Januari 2026  (CT = -30 hari)
+
+    Jika Tipe A gagal (mundur melewati batas bulan), otomatis
+    fallback ke Tipe B.
+    """
+    error_type = random.choice(['A', 'B'])
+
+    if error_type == 'A':
+        mundur  = random.randint(2, 10)
+        bad_due = start_date - timedelta(days=mundur)
+        # Pastikan masih bulan dan tahun yang sama
+        if bad_due.month == start_date.month and bad_due.year == start_date.year:
+            return start_date, bad_due
+        # Fallback ke B jika melewati batas bulan
+        error_type = 'B'
+
+    # Tipe B: mundur 30-45 hari, dijamin beda bulan
+    mundur  = random.randint(30, 45)
+    bad_due = start_date - timedelta(days=mundur)
+    return start_date, bad_due
 
 
 # ── Helper: tanggal random dalam 1 bulan ─────────────────────
@@ -177,42 +261,26 @@ def random_date_in_month(year, month):
 # ── Helper: generate daftar proses untuk 1 main ticket ───────
 
 def generate_process_list(num_processes):
-    """
-    Generate daftar proses sejumlah num_processes.
-    Proses inti diutamakan, sisanya random dari 45 proses.
-    """
-    # Pilih beberapa proses inti secara random
-    num_core  = min(random.randint(3, 6), num_processes)
-    core      = random.sample(CORE_PROCESSES, num_core)
-
-    # Tambah dari proses optional sampai mencapai num_processes
-    optional  = [p for p in ALL_PROCESSES if p not in core]
+    num_core = min(random.randint(3, 6), num_processes)
+    core     = random.sample(CORE_PROCESSES, num_core)
+    optional = [p for p in ALL_PROCESSES if p not in core]
     random.shuffle(optional)
-
-    all_proc  = core[:]
+    all_proc = core[:]
     for p in optional:
         if len(all_proc) >= num_processes:
             break
         all_proc.append(p)
-
     return all_proc[:num_processes]
 
 
 # ── Helper: distribusi sub ticket ke main ticket ─────────────
 
 def distribute_sub_counts(num_main, target_total):
-    """
-    Distribusikan target_total sub ticket ke num_main main ticket
-    secara merata dengan sedikit variasi.
-    """
     base      = target_total // num_main
     remainder = target_total  % num_main
     counts    = [base] * num_main
-
     for i in random.sample(range(num_main), remainder):
         counts[i] += 1
-
-    # Variasi kecil supaya tidak monoton
     max_proc = len(ALL_PROCESSES)
     for _ in range(num_main * 2):
         i = random.randint(0, num_main - 1)
@@ -220,7 +288,6 @@ def distribute_sub_counts(num_main, target_total):
         if i != j and counts[i] > 3 and counts[j] < max_proc:
             counts[i] -= 1
             counts[j] += 1
-
     return counts
 
 
@@ -231,7 +298,9 @@ class Command(BaseCommand):
         'Generate dummy JIRA data: '
         '25-35 main ticket/bulan, 350-450 sub ticket/bulan, '
         '13 package, 45 predefined process, '
-        'April 2024 — Maret 2026'
+        'Januari 2024 - Desember 2026. '
+        'Durasi mayoritas 1 hari, max 10 hari. '
+        'Tepat 1-3 error tanggal per bulan.'
     )
 
     def handle(self, *args, **options):
@@ -242,18 +311,19 @@ class Command(BaseCommand):
         JiraMainTicket.objects.all().delete()
         self.stdout.write(self.style.SUCCESS('Data lama dihapus.'))
 
-        # ── Rentang waktu: April 2024 — Maret 2026 ──────────
+        # ── Rentang waktu: Januari 2024 - Desember 2026 ────────
         months = []
-        for m in range(4, 13):    # April - Desember 2024
+        for m in range(1, 13):    # Januari - Desember 2024
             months.append((2024, m))
         for m in range(1, 13):    # Januari - Desember 2025
             months.append((2025, m))
-        for m in range(1, 4):     # Januari - Maret 2026
+        for m in range(1, 13):    # Januari - Desember 2026
             months.append((2026, m))
 
-        main_batch     = []
-        sub_batch      = []
-        ticket_counter = 1
+        main_batch           = []
+        sub_batch            = []
+        ticket_counter       = 1
+        total_error_injected = 0
 
         self.stdout.write(self.style.WARNING('Generate data...'))
         self.stdout.write('')
@@ -264,8 +334,12 @@ class Command(BaseCommand):
             target_sub = random.randint(SUB_PER_MONTH_MIN, SUB_PER_MONTH_MAX)
             sub_counts = distribute_sub_counts(num_main, target_sub)
 
-            month_sub_count = 0
+            month_sub_count  = 0
+            # Kumpulkan index posisi di sub_batch untuk sub-ticket Completed
+            # agar bisa dipilih acak setelah loop selesai
+            completed_indices = []
 
+            # ── Pass 1: generate semua sub-ticket bulan ini ──────────────
             for i in range(num_main):
                 issue_key    = f"DEVSMETS-{str(ticket_counter).zfill(5)}"
                 created_date = random_date_in_month(year, month)
@@ -273,7 +347,6 @@ class Command(BaseCommand):
                 num_sub      = sub_counts[i]
                 process_list = generate_process_list(num_sub)
 
-                # ── Main Ticket ── status selalu Closed
                 main_obj = JiraMainTicket(
                     issue_key        = issue_key,
                     status           = "Closed",
@@ -283,20 +356,20 @@ class Command(BaseCommand):
                 )
                 main_batch.append(main_obj)
 
-                # ── Sub Tickets ──
                 current_start = created_date + timedelta(days=random.randint(1, 3))
 
                 for idx, process in enumerate(process_list):
-                    sub_key        = f"{issue_key}-{str(idx + 1).zfill(2)}"
-                    min_d, max_d   = PROCESS_DURATION.get(process, (1, 3))
-                    duration       = random.randint(min_d, max_d)
-                    calculated_due = current_start + timedelta(days=duration)
+                    sub_key      = f"{issue_key}-{str(idx + 1).zfill(2)}"
+                    min_d, max_d = PROCESS_DURATION.get(process, (1, 3))
+                    duration     = random_duration(min_d, max_d)
+                    calc_due     = current_start + timedelta(days=duration)
 
-                    # Status & due_date berdasarkan tanggal hari ini
-                    if calculated_due <= TODAY:
+                    if calc_due <= TODAY:
                         status     = "Completed"
                         start_date = current_start
-                        due_date   = calculated_due
+                        due_date   = calc_due
+                        # Catat posisi di sub_batch sebagai kandidat error
+                        completed_indices.append(len(sub_batch))
                     elif current_start <= TODAY:
                         status     = "In Progress"
                         start_date = current_start
@@ -306,26 +379,39 @@ class Command(BaseCommand):
                         start_date = None
                         due_date   = None
 
-                    # Proses berikutnya mulai setelah ini selesai
-                    current_start = calculated_due + timedelta(days=random.randint(0, 1))
+                    current_start = calc_due + timedelta(days=random.randint(0, 1))
 
-                    sub_obj = JiraSubTicket(
+                    sub_batch.append(JiraSubTicket(
                         issue_key          = sub_key,
                         parent_key         = main_obj,
                         status             = status,
                         start_date         = start_date,
                         due_date           = due_date,
                         predefined_process = process,
-                    )
-                    sub_batch.append(sub_obj)
+                    ))
                     month_sub_count += 1
 
                 ticket_counter += 1
 
+            # ── Pass 2: inject error ke 1-3 sub-ticket Completed bulan ini
+            # Pilih secara acak dari completed_indices, lalu ubah due_date-nya.
+            error_quota   = random.randint(ERROR_PER_MONTH_MIN, ERROR_PER_MONTH_MAX)
+            actual_quota  = min(error_quota, len(completed_indices))
+            chosen        = random.sample(completed_indices, actual_quota)
+
+            for ci in chosen:
+                sub            = sub_batch[ci]
+                sd, bad_due    = inject_date_error(sub.start_date, sub.due_date)
+                sub.start_date = sd
+                sub.due_date   = bad_due
+
+            total_error_injected += actual_quota
+
             self.stdout.write(
-                f'  ✓ {year}-{str(month).zfill(2)} → '
+                f'  ✓ {year}-{str(month).zfill(2)} -> '
                 f'{num_main} main tickets, '
-                f'{month_sub_count} sub tickets'
+                f'{month_sub_count} sub tickets, '
+                f'{actual_quota} error injected'
             )
 
         # ── Bulk Insert ke PostgreSQL ─────────────────────────
@@ -335,7 +421,7 @@ class Command(BaseCommand):
         JiraMainTicket.objects.bulk_create(main_batch, batch_size=500)
         self.stdout.write(self.style.SUCCESS(f'  ✓ {len(main_batch)} main tickets tersimpan'))
 
-        # Ambil mapping issue_key → DB object untuk parent_key
+        # Ambil mapping issue_key -> DB object untuk parent_key
         main_map = {m.issue_key: m for m in JiraMainTicket.objects.all()}
         for sub in sub_batch:
             sub.parent_key = main_map[sub.parent_key.issue_key]
@@ -358,7 +444,11 @@ class Command(BaseCommand):
         self.stdout.write(f'  Total Sub Tickets    : {total_sub} (rata-rata {avg_sub:.0f}/bulan)')
         self.stdout.write(f'  Sub - Completed      : {total_completed}')
         self.stdout.write(f'  Sub - In Progress    : {total_progress}')
+        self.stdout.write(f'  Error Injected       : {total_error_injected} total '
+                          f'(1-3 per bulan x {len(months)} bulan)')
+        self.stdout.write(f'    Tipe A : due < start, bulan sama  -> CT negatif kecil')
+        self.stdout.write(f'    Tipe B : due di bulan sebelumnya  -> CT negatif besar')
         self.stdout.write(f'  Total Package        : {len(PACKAGES)} jenis')
         self.stdout.write(f'  Total Process        : {len(ALL_PROCESSES)} jenis')
-        self.stdout.write(f'  Rentang Data         : April 2024 — Maret 2026')
+        self.stdout.write(f'  Rentang Data         : Januari 2024 - Desember 2026')
         self.stdout.write('=' * 60)

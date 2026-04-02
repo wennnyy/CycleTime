@@ -29,6 +29,10 @@ def role_required(role_name):
         return wrapper
     return decorator
 
+#
+def get_published_syncs():
+    """Hanya data yang sudah di-publish via tombol Create Dashboard"""
+    return SyncLog.objects.filter(status='published').values_list('id', flat=True)
 
 # ======================================================
 # AUTHENTICATION
@@ -37,6 +41,12 @@ def login_view(request):
     if request.user.is_authenticated:
         return redirect_by_role(request.user)
 
+    # Flush semua messages sisa di session agar tidak bocor ke halaman lain
+    storage = messages.get_messages(request)
+    list(storage)
+    storage.used = True
+
+    error = None
     if request.method == 'POST':
         username = request.POST.get('username')
         password = request.POST.get('password')
@@ -45,9 +55,9 @@ def login_view(request):
             login(request, user)
             return redirect_by_role(user)
         else:
-            messages.error(request, "Username atau password salah")
+            error = "Username atau password salah"
 
-    return render(request, 'main/auth/login.html')
+    return render(request, 'main/auth/login.html', {'error': error})
 
 
 def logout_view(request):
@@ -71,11 +81,14 @@ def redirect_by_role(user):
 def get_dashboard_filter_options():
     """Ambil semua nilai unik untuk filter dropdown di dashboard."""
     from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
+    
+    published = get_published_syncs()
 
     years_qs = RawTicket.objects.filter(
         parent_key__isnull=False,
         start_date__isnull=False,
         cycle_time__isnull=False,
+        sync_log__in=published,
     ).dates('start_date', 'year')
 
     return {
@@ -89,8 +102,10 @@ def get_dashboard_filter_options():
 @login_required
 @role_required('admin')
 def dashboard_admin(request):
-    total_main    = RawTicket.objects.filter(parent_key__isnull=True).count()
-    total_sub     = RawTicket.objects.filter(parent_key__isnull=False).count()
+    published = get_published_syncs()
+    
+    total_main    = RawTicket.objects.filter(parent_key__isnull=True, sync_log__in=published).count()
+    total_sub     = RawTicket.objects.filter(parent_key__isnull=False, sync_log__in=published).count()
     total_flagged = ErrorTicket.objects.count()
     last_sync     = SyncLog.objects.order_by('-started_at').first()
 
@@ -189,7 +204,7 @@ def admin_sync(request):
                     params={
                         'start_after':  start_date,   # start_date >= tgl mulai
                         'start_before': end_date,     # start_date <= tgl akhir
-                        'status':       'Completed',  # sistem hanya ambil yang selesai
+                        'status':     'Completed',  # sistem hanya ambil yang selesai
                     }
                 )
 
@@ -353,8 +368,8 @@ def admin_sync(request):
         from mock_jira.models import JiraSubTicket as JiraSubModel
         total = JiraSubModel.objects.filter(
             status='Completed',
-            start_date__gte=start_date,
-            start_date__lte=end_date,
+            due_date__gte=start_date,
+            due_date__lte=end_date,
         ).count()
         error = None
     except Exception as e:
@@ -425,6 +440,7 @@ def admin_sync(request):
                 'start_date':         t.start_date,
                 'due_date':           t.due_date,
                 'cycle_time':         t.cycle_time,
+                'has_ct':             t.cycle_time is not None,
                 'is_flagged':         t.ticket_key in flagged_keys,
             }
             sync_data.append(enrich_ticket(item))
@@ -451,26 +467,9 @@ def admin_sync(request):
         'flagged_count':  flagged_count,
         'clean_count':    total_all_raw - flagged_count,
         'has_unpublished': last_sync is not None,
+        'has_published':   SyncLog.objects.filter(status='published').exists(),
     }
     return render(request, 'main/admin/sync.html', context)
-def _save_or_update_ticket(ticket_key, parent_key, platform, summary,
-                            status, start_date, due_date, package_name,
-                            predefined_process, sync_log, cycle_time=None):
-    RawTicket.objects.update_or_create(
-        ticket_key=ticket_key,
-        defaults={
-            'parent_key':         parent_key,
-            'platform':           platform,
-            'summary':            summary,
-            'status':             status,
-            'start_date':         start_date or None,
-            'due_date':           due_date   or None,
-            'cycle_time':         cycle_time,
-            'package_name':       package_name,
-            'predefined_process': predefined_process,
-            'sync_log':           sync_log,
-        }
-    )
 
 
 def hitung_cycle_time(start_date_str, due_date_str):
@@ -479,8 +478,9 @@ def hitung_cycle_time(start_date_str, due_date_str):
     try:
         start = datetime.strptime(start_date_str, '%Y-%m-%d').date()
         end   = datetime.strptime(due_date_str,   '%Y-%m-%d').date()
-        delta = (end - start).days
-        return float(delta) if delta >= 0 else None
+        # +1 hitung hari pertama; nilai negatif = data error (due < start)
+        delta = (end - start).days + 1
+        return float(delta)
     except Exception:
         return None
 
@@ -730,6 +730,7 @@ def admin_reports(request):
             'start_date':         t.start_date,
             'due_date':           t.due_date,
             'cycle_time':         t.cycle_time,
+            'has_ct':             t.cycle_time is not None,
         }
         data.append(enrich_ticket(item))
 
@@ -885,6 +886,7 @@ def staff_view_data(request):
                 'start_date':         t.start_date,
                 'due_date':           t.due_date,
                 'cycle_time':         t.cycle_time,
+                'has_ct':             t.cycle_time is not None,
                 'is_flagged':         t.ticket_key in flagged_keys,
             }
             sync_data.append(enrich_ticket(item))
@@ -965,6 +967,7 @@ def staff_reports(request):
             'start_date':         t.start_date,
             'due_date':           t.due_date,
             'cycle_time':         t.cycle_time,
+            'has_ct':             t.cycle_time is not None,
         }
         data.append(enrich_ticket(item))
 
@@ -1060,6 +1063,7 @@ def management_reports(request):
             'start_date':         t.start_date,
             'due_date':           t.due_date,
             'cycle_time':         t.cycle_time,
+            'has_ct':             t.cycle_time is not None,
         }
         data.append(enrich_ticket(item))
 
@@ -1090,12 +1094,15 @@ def chart_data_api(request):
     Diakses oleh semua role via AJAX.
     """
     from main.process_groups import get_process_info
+    
+    published = get_published_syncs()
 
     # Hanya sub ticket yang punya cycle_time
     qs = RawTicket.objects.filter(
         parent_key__isnull=False,
         cycle_time__isnull=False,
         platform__isnull=False,
+        sync_log__in=published,
     ).exclude(platform='')
 
     # ── 1. Rata-rata CT per Platform ─────────────────────────
@@ -1238,12 +1245,15 @@ def chart_data_api(request):
 def ct_analysis_dashboard(request):
     """Halaman analisis cycle time dengan pivot table dan grafik."""
     from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
+    
+    published = get_published_syncs()
 
     # Ambil semua nilai unik untuk filter
     months_qs = RawTicket.objects.filter(
         parent_key__isnull=False,
         start_date__isnull=False,
         cycle_time__isnull=False,
+        sync_log__in=published,
     ).dates('start_date', 'month')
 
     all_months       = sorted(set(f"{d.year}-{str(d.month).zfill(2)}" for d in months_qs))
@@ -1266,6 +1276,8 @@ def ct_analysis_dashboard(request):
 def ct_analysis_data(request):
     from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
     from collections import defaultdict
+    
+    published = get_published_syncs()
 
     f_year      = request.GET.get('year', '').strip()
     f_platforms = request.GET.getlist('platform')
@@ -1274,7 +1286,10 @@ def ct_analysis_data(request):
     f_processes = request.GET.getlist('process')
 
     qs = RawTicket.objects.filter(
-        parent_key__isnull=False, cycle_time__isnull=False, start_date__isnull=False,
+        parent_key__isnull=False, 
+        cycle_time__isnull=False, 
+        start_date__isnull=False,
+        sync_log__in=published,
     ).exclude(predefined_process__isnull=True).exclude(predefined_process='') \
      .exclude(platform__isnull=True).exclude(platform='')
 

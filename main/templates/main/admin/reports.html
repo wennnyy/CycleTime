@@ -41,6 +41,21 @@
                    placeholder="Search Ticket ID / Package..."
                    class="border border-gray-300 rounded px-3 py-1.5 text-sm w-52">
 
+            <!-- Filter Tanggal -->
+            <input type="date"
+                   name="date_from"
+                   value="{{ date_from }}"
+                   title="Start Date From"
+                   class="border border-gray-300 rounded px-3 py-1.5 text-sm">
+
+            <span class="text-gray-400 text-sm">–</span>
+
+            <input type="date"
+                   name="date_to"
+                   value="{{ date_to }}"
+                   title="Start Date To"
+                   class="border border-gray-300 rounded px-3 py-1.5 text-sm">
+
             <select name="per_page"
                     class="border border-gray-300 rounded px-3 py-1.5 text-sm"
                     onchange="this.form.submit()">
@@ -54,26 +69,35 @@
                 Search
             </button>
 
-            {% if query %}
+            {% if query or date_from or date_to %}
             <a href="{% url 'admin_reports' %}"
                class="border border-gray-300 px-3 py-1.5 rounded text-sm text-gray-500 hover:bg-gray-50">
                 Reset
             </a>
             {% endif %}
 
-            <a href="{% url 'download_report' %}"
+            <a href="{% url 'download_report' %}{% if query or date_from or date_to %}?q={{ query }}&date_from={{ date_from }}&date_to={{ date_to }}{% endif %}"
                class="bg-gray-700 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-800">
                 ↓ Download PDF
             </a>
         </form>
     </div>
 
+    <!-- Active date filter info -->
+    {% if date_from or date_to %}
+    <p class="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-3 py-1.5 mb-3 inline-block">
+        📅 Filtered by date:
+        {% if date_from %}from <strong>{{ date_from }}</strong>{% endif %}
+        {% if date_to %}to <strong>{{ date_to }}</strong>{% endif %}
+    </p>
+    {% endif %}
+
     <!-- Showing X to Y -->
     <p class="text-sm text-gray-500 mb-3">
         Showing <strong>{{ start_index }}</strong> to
         <strong>{{ end_index }}</strong> of
         <strong>{{ total_filtered }}</strong> entries
-        {% if query %}(filtered){% endif %}
+        {% if query or date_from or date_to %}(filtered){% endif %}
     </p>
 
     <!-- Table -->
@@ -121,7 +145,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="11" class="p-8 text-center text-gray-400">
+                    <td colspan="12" class="p-8 text-center text-gray-400">
                         No published data available. Create a dashboard from the Synchronization page first.
                     </td>
                 </tr>
@@ -140,7 +164,7 @@
         </p>
         <div class="flex items-center gap-1">
             {% if page_obj.has_previous %}
-            <a href="?page={{ page_obj.previous_page_number }}&q={{ query }}&per_page={{ per_page }}"
+            <a href="?page={{ page_obj.previous_page_number }}&q={{ query }}&per_page={{ per_page }}&date_from={{ date_from }}&date_to={{ date_to }}"
                class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">Previous</a>
             {% else %}
             <span class="px-3 py-1.5 border border-gray-200 rounded text-sm text-gray-300 cursor-not-allowed">Previous</span>
@@ -152,13 +176,13 @@
                 {% elif p == page_obj.number %}
                 <span class="px-3 py-1.5 border border-gray-800 bg-black text-white rounded text-sm font-semibold">{{ p }}</span>
                 {% else %}
-                <a href="?page={{ p }}&q={{ query }}&per_page={{ per_page }}"
+                <a href="?page={{ p }}&q={{ query }}&per_page={{ per_page }}&date_from={{ date_from }}&date_to={{ date_to }}"
                    class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
                 {% endif %}
             {% endfor %}
 
             {% if page_obj.has_next %}
-            <a href="?page={{ page_obj.next_page_number }}&q={{ query }}&per_page={{ per_page }}"
+            <a href="?page={{ page_obj.next_page_number }}&q={{ query }}&per_page={{ per_page }}&date_from={{ date_from }}&date_to={{ date_to }}"
                class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">Next</a>
             {% else %}
             <span class="px-3 py-1.5 border border-gray-200 rounded text-sm text-gray-300 cursor-not-allowed">Next</span>
