@@ -678,6 +678,8 @@ def delete_user(request, user_id):
 @role_required('admin')
 def admin_reports(request):
     query       = request.GET.get('q', '')
+    date_from   = request.GET.get('date_from', '')
+    date_to     = request.GET.get('date_to', '')
     page_number = request.GET.get('page', 1)
     per_page    = int(request.GET.get('per_page', 10))
     if per_page not in [10, 25, 50, 100]:
@@ -695,6 +697,10 @@ def admin_reports(request):
             Q(platform__icontains=query)   |
             Q(predefined_process__icontains=query)
         )
+    if date_from:
+        qs = qs.filter(start_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(start_date__lte=date_to)
 
     # ── Deduplikasi berdasarkan ticket_key ────────────────────────────────
     seen       = set()
@@ -737,6 +743,8 @@ def admin_reports(request):
     context = {
         'data':           data,
         'query':          query,
+        'date_from':      date_from,
+        'date_to':        date_to,
         'per_page':       per_page,
         'page_obj':       page_obj,
         'paginator':      paginator,
@@ -753,8 +761,322 @@ def admin_reports(request):
 @login_required
 @role_required('admin')
 def download_report(request):
-    response = HttpResponse("PDF Report Placeholder", content_type='application/pdf')
-    response['Content-Disposition'] = 'attachment; filename="report.pdf"'
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    import io
+
+    query     = request.GET.get('q', '')
+    date_from = request.GET.get('date_from', '')
+    date_to   = request.GET.get('date_to', '')
+
+    # Ambil data yang sama seperti admin_reports
+    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
+    qs = RawTicket.objects.filter(sync_log__in=published_syncs).order_by('ticket_key')
+
+    if query:
+        qs = qs.filter(
+            Q(ticket_key__icontains=query) |
+            Q(platform__icontains=query)   |
+            Q(predefined_process__icontains=query)
+        )
+    if date_from:
+        qs = qs.filter(start_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(start_date__lte=date_to)
+
+    # Deduplikasi
+    seen, unique_ids = set(), []
+    for t in qs.values('id', 'ticket_key'):
+        if t['ticket_key'] not in seen:
+            seen.add(t['ticket_key'])
+            unique_ids.append(t['id'])
+    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
+
+    # ── Build PDF ─────────────────────────────────────────────────────────────
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        leftMargin=1*cm, rightMargin=1*cm,
+        topMargin=1.5*cm, bottomMargin=1.5*cm,
+    )
+
+    styles = getSampleStyleSheet()
+    elements = []
+
+    # Judul
+    title_style = ParagraphStyle(
+        'ReportTitle', parent=styles['Heading1'],
+        fontSize=14, spaceAfter=4, textColor=colors.HexColor('#1e293b'),
+    )
+    elements.append(Paragraph("Clean Ticket Report", title_style))
+
+    # Info filter
+    sub_parts = []
+    if query:     sub_parts.append(f"Search: {query}")
+    if date_from: sub_parts.append(f"From: {date_from}")
+    if date_to:   sub_parts.append(f"To: {date_to}")
+    sub_parts.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    sub_parts.append(f"Total records: {qs.count()}")
+    elements.append(Paragraph("  |  ".join(sub_parts), styles['Normal']))
+    elements.append(Spacer(1, 0.5*cm))
+
+    # Header tabel
+    headers = [
+        'No', 'Ticket ID', 'Parent', 'Package', 'Platform',
+        'Process', 'Stage', 'Area', 'Start Date', 'Due Date', 'CT (days)', 'Status',
+    ]
+    table_data = [headers]
+
+    for i, t in enumerate(qs, start=1):
+        item = {
+            'ticket_key':         t.ticket_key,
+            'parent_key':         t.parent_key,
+            'platform':           t.platform,
+            'predefined_process': t.predefined_process,
+            'status':             t.status,
+            'start_date':         t.start_date,
+            'due_date':           t.due_date,
+            'cycle_time':         t.cycle_time,
+        }
+        enriched = enrich_ticket(item)
+        ct_val = f"{enriched['cycle_time']:.1f}" if enriched.get('cycle_time') else '—'
+        table_data.append([
+            str(i),
+            enriched.get('ticket_key', '—'),
+            enriched.get('parent_key') or '—',
+            enriched.get('platform') or '—',
+            enriched.get('platform_group') or '—',
+            enriched.get('predefined_process') or '—',
+            enriched.get('process_stage') or '—',
+            enriched.get('process_area') or '—',
+            str(enriched.get('start_date') or '—'),
+            str(enriched.get('due_date') or '—'),
+            ct_val,
+            enriched.get('status', '—'),
+        ])
+
+    col_widths = [
+        0.8*cm, 2.8*cm, 2.8*cm, 2.5*cm, 2.5*cm,
+        3.2*cm, 2.5*cm, 2.5*cm, 2.2*cm, 2.2*cm, 1.8*cm, 2.2*cm,
+    ]
+
+    table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle([
+        # Header
+        ('BACKGROUND',    (0, 0), (-1, 0),  colors.HexColor('#1e293b')),
+        ('TEXTCOLOR',     (0, 0), (-1, 0),  colors.white),
+        ('FONTNAME',      (0, 0), (-1, 0),  'Helvetica-Bold'),
+        ('FONTSIZE',      (0, 0), (-1, 0),  7),
+        # Body
+        ('FONTSIZE',      (0, 1), (-1, -1), 6.5),
+        ('FONTNAME',      (0, 1), (-1, -1), 'Helvetica'),
+        # Alignment
+        ('ALIGN',         (0, 0), (-1, -1), 'CENTER'),
+        ('ALIGN',         (1, 1), (2, -1),  'LEFT'),   # Ticket ID & Parent kiri
+        ('ALIGN',         (5, 1), (7, -1),  'LEFT'),   # Process/Stage/Area kiri
+        ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+        # Row stripes
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f1f5f9')]),
+        # Grid
+        ('GRID',          (0, 0), (-1, -1), 0.4, colors.HexColor('#cbd5e1')),
+        ('LINEBELOW',     (0, 0), (-1, 0),  1.2, colors.HexColor('#3b82f6')),
+        # Padding
+        ('TOPPADDING',    (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(table)
+
+    doc.build(elements)
+    buffer.seek(0)
+
+    filename = f"report-{datetime.now().strftime('%Y%m%d-%H%M%S')}.pdf"
+    response = HttpResponse(buffer, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+@role_required('admin')
+def download_report_excel(request):
+    import io
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    query     = request.GET.get('q', '')
+    date_from = request.GET.get('date_from', '')
+    date_to   = request.GET.get('date_to', '')
+
+    # Ambil data — logika sama persis seperti download_report (PDF)
+    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
+    qs = RawTicket.objects.filter(sync_log__in=published_syncs).order_by('ticket_key')
+
+    if query:
+        qs = qs.filter(
+            Q(ticket_key__icontains=query) |
+            Q(platform__icontains=query)   |
+            Q(predefined_process__icontains=query)
+        )
+    if date_from:
+        qs = qs.filter(start_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(start_date__lte=date_to)
+
+    # Deduplikasi — sama seperti PDF
+    seen, unique_ids = set(), []
+    for t in qs.values('id', 'ticket_key'):
+        if t['ticket_key'] not in seen:
+            seen.add(t['ticket_key'])
+            unique_ids.append(t['id'])
+    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
+
+    # ── Build Excel ───────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ticket Report"
+
+    # Style constants
+    COLOR_HEADER_BG = '1E293B'
+    COLOR_HEADER_FG = 'FFFFFF'
+    COLOR_ROW_ODD   = 'FFFFFF'
+    COLOR_ROW_EVEN  = 'F1F5F9'
+    COLOR_BORDER    = 'CBD5E1'
+    COLOR_ACCENT    = '3B82F6'
+
+    thin_border = Border(
+        left=Side(style='thin', color=COLOR_BORDER),
+        right=Side(style='thin', color=COLOR_BORDER),
+        top=Side(style='thin', color=COLOR_BORDER),
+        bottom=Side(style='thin', color=COLOR_BORDER),
+    )
+    accent_bottom_border = Border(
+        left=Side(style='thin', color=COLOR_BORDER),
+        right=Side(style='thin', color=COLOR_BORDER),
+        top=Side(style='thin', color=COLOR_BORDER),
+        bottom=Side(style='medium', color=COLOR_ACCENT),
+    )
+
+    # Baris 1: Judul
+    ws.merge_cells('A1:L1')
+    title_cell = ws['A1']
+    title_cell.value = 'Clean Ticket Report'
+    title_cell.font      = Font(name='Calibri', bold=True, size=14, color=COLOR_HEADER_BG)
+    title_cell.alignment = Alignment(horizontal='left', vertical='center')
+    ws.row_dimensions[1].height = 24
+
+    # Baris 2: Info filter — sama seperti yang ditampilkan di PDF
+    ws.merge_cells('A2:L2')
+    info_parts = []
+    if query:     info_parts.append(f"Search: {query}")
+    if date_from: info_parts.append(f"From: {date_from}")
+    if date_to:   info_parts.append(f"To: {date_to}")
+    info_parts.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    info_parts.append(f"Total records: {qs.count()}")
+    info_cell = ws['A2']
+    info_cell.value = '  |  '.join(info_parts)
+    info_cell.font      = Font(name='Calibri', size=9, color='64748B')
+    info_cell.alignment = Alignment(horizontal='left', vertical='center')
+    ws.row_dimensions[2].height = 16
+
+    # Baris 3: Spasi
+    ws.row_dimensions[3].height = 6
+
+    # Baris 4: Header tabel
+    HEADERS = [
+        ('No',         5),
+        ('Ticket ID',  14),
+        ('Parent',     14),
+        ('Package',    14),
+        ('Platform',   14),
+        ('Process',    18),
+        ('Stage',      14),
+        ('Area',       16),
+        ('Start Date', 13),
+        ('Due Date',   13),
+        ('CT (days)',  10),
+        ('Status',     13),
+    ]
+    header_fill  = PatternFill('solid', fgColor=COLOR_HEADER_BG)
+    header_font  = Font(name='Calibri', bold=True, size=9, color=COLOR_HEADER_FG)
+    header_align = Alignment(horizontal='center', vertical='center')
+
+    for col_idx, (label, width) in enumerate(HEADERS, start=1):
+        cell = ws.cell(row=4, column=col_idx, value=label)
+        cell.fill      = header_fill
+        cell.font      = header_font
+        cell.alignment = header_align
+        cell.border    = accent_bottom_border
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    ws.row_dimensions[4].height = 20
+
+    # Baris 5+: Data
+    center_align = Alignment(horizontal='center', vertical='center')
+    left_align   = Alignment(horizontal='left',   vertical='center')
+    ct_font      = Font(name='Calibri', size=9, bold=True, color='1D4ED8')
+    base_font    = Font(name='Calibri', size=9)
+
+    for i, t in enumerate(qs, start=1):
+        row_num = i + 4
+        item = {
+            'ticket_key':         t.ticket_key,
+            'parent_key':         t.parent_key,
+            'platform':           t.platform,
+            'predefined_process': t.predefined_process,
+            'status':             t.status,
+            'start_date':         t.start_date,
+            'due_date':           t.due_date,
+            'cycle_time':         t.cycle_time,
+        }
+        e = enrich_ticket(item)
+        ct_val   = round(e['cycle_time'], 1) if e.get('cycle_time') else None
+        row_fill = PatternFill('solid', fgColor=COLOR_ROW_ODD if i % 2 else COLOR_ROW_EVEN)
+
+        values = [
+            i,
+            e.get('ticket_key', ''),
+            e.get('parent_key') or '',
+            e.get('platform') or '',
+            e.get('platform_group') or '',
+            e.get('predefined_process') or '',
+            e.get('process_stage') or '',
+            e.get('process_area') or '',
+            str(e.get('start_date') or ''),
+            str(e.get('due_date') or ''),
+            ct_val,
+            e.get('status', ''),
+        ]
+        aligns = [
+            center_align, left_align, left_align, left_align, left_align,
+            left_align, left_align, left_align,
+            center_align, center_align, center_align, center_align,
+        ]
+        for col_idx, (val, aln) in enumerate(zip(values, aligns), start=1):
+            cell = ws.cell(row=row_num, column=col_idx, value=val)
+            cell.fill      = row_fill
+            cell.border    = thin_border
+            cell.alignment = aln
+            cell.font      = ct_font if col_idx == 11 and val is not None else base_font
+        ws.row_dimensions[row_num].height = 16
+
+    # Freeze header & auto-filter
+    ws.freeze_panes = 'A5'
+    ws.auto_filter.ref = f"A4:L{ws.max_row}"
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    filename = f"report-{datetime.now().strftime('%Y%m%d-%H%M%S')}.xlsx"
+    response = HttpResponse(
+        buffer,
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
 
 
@@ -915,16 +1237,18 @@ def staff_view_data(request):
 @role_required('staff')
 def staff_reports(request):
     query       = request.GET.get('q', '')
+    date_from   = request.GET.get('date_from', '')
+    date_to     = request.GET.get('date_to', '')
     page_number = request.GET.get('page', 1)
     per_page    = int(request.GET.get('per_page', 10))
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    # Semua clean ticket (tidak diflag)
-    flagged_ids = ErrorTicket.objects.values_list('ticket_id', flat=True)
+    # Hanya tampilkan data dari sync yang sudah dipublish (status='published')
+    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
     qs = RawTicket.objects.filter(
-        parent_key__isnull=False
-    ).exclude(id__in=flagged_ids).order_by('ticket_key')
+        sync_log__in=published_syncs
+    ).order_by('ticket_key')
 
     if query:
         qs = qs.filter(
@@ -932,23 +1256,26 @@ def staff_reports(request):
             Q(platform__icontains=query)   |
             Q(predefined_process__icontains=query)
         )
+    if date_from:
+        qs = qs.filter(start_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(start_date__lte=date_to)
 
-    # Deduplikasi
-    from django.db.models import Max as MaxId
-    latest_ids = (
-        RawTicket.objects
-        .filter(id__in=qs.values('id'))
-        .values('ticket_key')
-        .annotate(max_id=MaxId('id'))
-        .values_list('max_id', flat=True)
-    )
-    qs = RawTicket.objects.filter(id__in=latest_ids).order_by('ticket_key')
+    # Deduplikasi berdasarkan ticket_key
+    seen       = set()
+    unique_ids = []
+    for t in qs.values('id', 'ticket_key'):
+        if t['ticket_key'] not in seen:
+            seen.add(t['ticket_key'])
+            unique_ids.append(t['id'])
+    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
 
-    total_main     = RawTicket.objects.filter(parent_key__isnull=True).count()
-    total_sub      = RawTicket.objects.filter(parent_key__isnull=False).count()
-    total_combined = total_main + total_sub
-    total_flagged  = flagged_ids.count()
-    total_clean    = qs.count()
+    total_main     = RawTicket.objects.filter(
+        sync_log__in=published_syncs, parent_key__isnull=True
+    ).count()
+    total_sub      = RawTicket.objects.filter(
+        sync_log__in=published_syncs, parent_key__isnull=False
+    ).count()
     total_filtered = qs.count()
 
     paginator   = Paginator(qs, per_page)
@@ -974,6 +1301,8 @@ def staff_reports(request):
     context = {
         'data':           data,
         'query':          query,
+        'date_from':      date_from,
+        'date_to':        date_to,
         'per_page':       per_page,
         'page_obj':       page_obj,
         'paginator':      paginator,
@@ -981,9 +1310,8 @@ def staff_reports(request):
         'start_index':    start_index,
         'end_index':      end_index,
         'total_filtered': total_filtered,
-        'total_combined': total_combined,
-        'total_flagged':  total_flagged,
-        'total_clean':    total_clean,
+        'total_main':     total_main,
+        'total_sub':      total_sub,
     }
     return render(request, 'main/staff/reports.html', context)
 
@@ -1017,16 +1345,18 @@ def dashboard_management(request):
 @role_required('management')
 def management_reports(request):
     query       = request.GET.get('q', '')
+    date_from   = request.GET.get('date_from', '')
+    date_to     = request.GET.get('date_to', '')
     page_number = request.GET.get('page', 1)
     per_page    = int(request.GET.get('per_page', 10))
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    # Semua clean ticket (tidak diflag)
-    flagged_ids = ErrorTicket.objects.values_list('ticket_id', flat=True)
+    # Hanya tampilkan data dari sync yang sudah dipublish (status='published')
+    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
     qs = RawTicket.objects.filter(
-        parent_key__isnull=False
-    ).exclude(id__in=flagged_ids).order_by('ticket_key')
+        sync_log__in=published_syncs
+    ).order_by('ticket_key')
 
     if query:
         qs = qs.filter(
@@ -1034,19 +1364,28 @@ def management_reports(request):
             Q(platform__icontains=query)   |
             Q(predefined_process__icontains=query)
         )
+    if date_from:
+        qs = qs.filter(start_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(start_date__lte=date_to)
 
-    # Deduplikasi
-    from django.db.models import Max as MaxId
-    latest_ids = (
-        RawTicket.objects
-        .filter(id__in=qs.values('id'))
-        .values('ticket_key')
-        .annotate(max_id=MaxId('id'))
-        .values_list('max_id', flat=True)
-    )
-    qs = RawTicket.objects.filter(id__in=latest_ids).order_by('ticket_key')
+    # Deduplikasi berdasarkan ticket_key
+    seen       = set()
+    unique_ids = []
+    for t in qs.values('id', 'ticket_key'):
+        if t['ticket_key'] not in seen:
+            seen.add(t['ticket_key'])
+            unique_ids.append(t['id'])
+    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
 
+    total_main     = RawTicket.objects.filter(
+        sync_log__in=published_syncs, parent_key__isnull=True
+    ).count()
+    total_sub      = RawTicket.objects.filter(
+        sync_log__in=published_syncs, parent_key__isnull=False
+    ).count()
     total_filtered = qs.count()
+
     paginator   = Paginator(qs, per_page)
     page_obj    = paginator.get_page(page_number)
     start_index = (page_obj.number - 1) * per_page + 1
@@ -1070,6 +1409,8 @@ def management_reports(request):
     context = {
         'data':           data,
         'query':          query,
+        'date_from':      date_from,
+        'date_to':        date_to,
         'per_page':       per_page,
         'page_obj':       page_obj,
         'paginator':      paginator,
@@ -1077,6 +1418,8 @@ def management_reports(request):
         'start_index':    start_index,
         'end_index':      end_index,
         'total_filtered': total_filtered,
+        'total_main':     total_main,
+        'total_sub':      total_sub,
     }
     return render(request, 'main/management/reports.html', context)
 

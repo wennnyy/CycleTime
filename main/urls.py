@@ -21,6 +21,7 @@ urlpatterns = [
     path('dashboard/admin/users/delete/<int:user_id>/', views.delete_user, name='delete_user'),
     path('dashboard/admin/reports/', views.admin_reports, name='admin_reports'),
     path('dashboard/admin/reports/download/', views.download_report, name='download_report'),
+    path('dashboard/admin/reports/download/excel/', views.download_report_excel, name='download_report_excel'),
     #admin sync
     path('dashboard/admin/sync/', views.admin_sync, name='admin_sync'),
 

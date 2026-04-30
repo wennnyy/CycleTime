@@ -1,3 +1,4 @@
+<!-- Admin Reports -->
 {% extends 'base_admin.html' %}
 
 {% block content %}
@@ -76,10 +77,46 @@
             </a>
             {% endif %}
 
-            <a href="{% url 'download_report' %}{% if query or date_from or date_to %}?q={{ query }}&date_from={{ date_from }}&date_to={{ date_to }}{% endif %}"
-               class="bg-gray-700 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-800">
-                ↓ Download PDF
-            </a>
+            <!-- Download Dropdown -->
+            <div class="relative" id="download-wrapper">
+                <button type="button"
+                        onclick="toggleDownloadMenu(event)"
+                        class="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-800 text-white px-3 py-1.5 rounded text-sm transition-colors">
+                    ↓ Download
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 opacity-70" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                    </svg>
+                </button>
+                <div id="download-menu"
+                     class="hidden absolute right-0 mt-1.5 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
+                    <a href="{% url 'download_report' %}{% if query or date_from or date_to %}?q={{ query }}&date_from={{ date_from }}&date_to={{ date_to }}{% endif %}"
+                       class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-red-50 hover:text-red-700 transition-colors group">
+                        <span class="flex items-center justify-center w-6 h-6 rounded bg-red-100 group-hover:bg-red-200 flex-shrink-0 text-red-600 font-bold text-xs">PDF</span>
+                        <div>
+                            <p class="font-medium leading-tight">PDF</p>
+                            <p class="text-xs text-gray-400 leading-tight">Portable Document</p>
+                        </div>
+                    </a>
+                    <div class="border-t border-gray-100"></div>
+                    <a href="{% url 'download_report_excel' %}{% if query or date_from or date_to %}?q={{ query }}&date_from={{ date_from }}&date_to={{ date_to }}{% endif %}"
+                       class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-green-50 hover:text-green-700 transition-colors group">
+                        <span class="flex items-center justify-center w-6 h-6 rounded bg-green-100 group-hover:bg-green-200 flex-shrink-0 text-green-600 font-bold text-xs">XLS</span>
+                        <div>
+                            <p class="font-medium leading-tight">Excel</p>
+                            <p class="text-xs text-gray-400 leading-tight">Spreadsheet (.xlsx)</p>
+                        </div>
+                    </a>
+                </div>
+                <script>
+                function toggleDownloadMenu(e) {
+                    e.stopPropagation();
+                    document.getElementById('download-menu').classList.toggle('hidden');
+                }
+                document.addEventListener('click', function() {
+                    document.getElementById('download-menu').classList.add('hidden');
+                });
+                </script>
+            </div>
         </form>
     </div>
 
