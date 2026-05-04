@@ -122,7 +122,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
-STATICFILES_DIRS = [BASE_DIR / 'static', BASE_DIR / 'main' / 'static']
+STATICFILES_DIRS = [BASE_DIR / 'static',] 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
@@ -135,3 +135,21 @@ LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ============================================================
+# MOCK JIRA API
+# ============================================================
+# Karena mock_jira dan main berjalan dalam SATU project Django
+# (satu proses, satu port), HTTP loopback ke diri sendiri akan
+# menyebabkan DEADLOCK. Maka semua akses ke mock_jira dilakukan
+# langsung via query DB (ORM), bukan via HTTP requests.
+#
+# Flag USE_DIRECT_DB = True  → pakai ORM langsung (development)
+#         USE_DIRECT_DB = False → pakai HTTP API (jika mock_jira
+#                                  dijalankan di server/port terpisah)
+# ============================================================
+ 
+MOCK_JIRA_BASE_URL   = "http://localhost:8001/mock-jira/api"  # hanya aktif jika USE_DIRECT_DB = False
+MOCK_JIRA_TIMEOUT    = 30    # detik
+MOCK_JIRA_PAGE_SIZE  = 500   # item per halaman
+MOCK_JIRA_USE_DIRECT_DB = False  # ← ubah ke False jika mock_jira di server terpisah

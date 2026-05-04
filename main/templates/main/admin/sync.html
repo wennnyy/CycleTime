@@ -51,15 +51,16 @@
                    name="end_date"
                    value="{{ end_date }}"
                    min="2024-04-01"
-                   max="2026-03-31"
+                   max="2026-05-01"
                    class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
         </div>
 
+        <!-- id="recordsCount" ditambahkan untuk update real-time via JS -->
         <div class="bg-white p-4 rounded shadow flex items-center justify-center">
             <div class="text-center">
                 <p class="text-sm text-gray-500">Records Tersedia</p>
-                <p class="text-2xl font-bold text-gray-800">~{{ total|default:"0" }}</p>
-                <p class="text-xs text-gray-400">main tickets</p>
+                <p class="text-2xl font-bold text-gray-800" id="recordsCount">~{{ total|default:"0" }}</p>
+                <p class="text-xs text-gray-400">Sub Tickets (Completed)</p>
             </div>
         </div>
 
@@ -152,7 +153,6 @@
 {% if sync_data %}
 <div class="bg-white p-6 rounded shadow mt-6">
 
-    <!-- Header + filter -->
     <div class="flex flex-wrap justify-between items-center mb-4 gap-3">
         <div>
             <h3 class="font-semibold text-gray-800">Sync Data</h3>
@@ -166,6 +166,8 @@
         </div>
 
         <form method="get" class="flex flex-wrap gap-2 items-center" id="filterForm">
+            <input type="hidden" name="start_date" value="{{ start_date }}">
+            <input type="hidden" name="end_date"   value="{{ end_date }}">
             <input type="text"
                    name="q"
                    value="{{ query }}"
@@ -194,7 +196,6 @@
         </form>
     </div>
 
-    <!-- Tabel -->
     <div class="overflow-x-auto">
         <table class="w-full border text-sm">
             <thead class="bg-gray-100">
@@ -222,7 +223,7 @@
                     </td>
                     <td class="p-2 border font-mono text-xs font-medium">{{ item.ticket_key }}</td>
                     <td class="p-2 border font-mono text-xs text-gray-500">{{ item.parent_key|default:"—" }}</td>
-                    <td class="p-2 border text-xs">{{ item.platform|default:"—" }}</td>
+                    <td class="p-2 border text-xs">{{ item.package_name|default:"—" }}</td>
                     <td class="p-2 border text-xs">{{ item.platform_group|default:"—" }}</td>
                     <td class="p-2 border text-xs">{{ item.predefined_process|default:"—" }}</td>
                     <td class="p-2 border text-xs">{{ item.process_stage|default:"—" }}</td>
@@ -243,7 +244,6 @@
                     <td class="p-2 border text-center text-xs">{{ item.status }}</td>
                     <td class="p-2 border text-center">
                         {% if item.is_flagged %}
-                            <!-- Sudah diflag — tidak bisa diklik, resolve di Data Management -->
                             <span title="Flagged — resolve in Data Management"
                                   class="text-red-600 cursor-not-allowed">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 24 24" fill="currentColor">
@@ -251,7 +251,6 @@
                                 </svg>
                             </span>
                         {% else %}
-                            <!-- Belum diflag — tombol flag -->
                             <button onclick="openFlagModal('{{ item.ticket_key }}')"
                                     title="Flag this ticket"
                                     class="text-red-500 hover:text-red-700 transition-colors">
@@ -273,7 +272,6 @@
         </table>
     </div>
 
-    <!-- Pagination -->
     {% if paginator.num_pages > 1 %}
     <div class="flex flex-col sm:flex-row items-center justify-between mt-5 gap-3">
         <p class="text-sm text-gray-500">
@@ -283,7 +281,7 @@
         </p>
         <div class="flex items-center gap-1">
             {% if page_obj.has_previous %}
-            <a href="?page={{ page_obj.previous_page_number }}&q={{ query }}&per_page={{ per_page }}"
+            <a href="?page={{ page_obj.previous_page_number }}&q={{ query }}&per_page={{ per_page }}&start_date={{ start_date }}&end_date={{ end_date }}"
                class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">Previous</a>
             {% else %}
             <span class="px-3 py-1.5 border border-gray-200 rounded text-sm text-gray-300 cursor-not-allowed">Previous</span>
@@ -295,13 +293,13 @@
                 {% elif p == page_obj.number %}
                 <span class="px-3 py-1.5 border border-gray-800 bg-black text-white rounded text-sm font-semibold">{{ p }}</span>
                 {% else %}
-                <a href="?page={{ p }}&q={{ query }}&per_page={{ per_page }}"
+                <a href="?page={{ p }}&q={{ query }}&per_page={{ per_page }}&start_date={{ start_date }}&end_date={{ end_date }}"
                    class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">{{ p }}</a>
                 {% endif %}
             {% endfor %}
 
             {% if page_obj.has_next %}
-            <a href="?page={{ page_obj.next_page_number }}&q={{ query }}&per_page={{ per_page }}"
+            <a href="?page={{ page_obj.next_page_number }}&q={{ query }}&per_page={{ per_page }}&start_date={{ start_date }}&end_date={{ end_date }}"
                class="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50">Next</a>
             {% else %}
             <span class="px-3 py-1.5 border border-gray-200 rounded text-sm text-gray-300 cursor-not-allowed">Next</span>
@@ -314,6 +312,7 @@
 {% endif %}
 
 
+<!-- ── Flag Modal ── -->
 <div id="flagModal"
      class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 hidden">
     <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
@@ -350,6 +349,7 @@
 
 
 <script>
+// ── Sync form ─────────────────────────────────────────────────────────────────
 function handleSync(event) {
     const start = document.getElementById('startInput').value;
     const end   = document.getElementById('endInput').value;
@@ -369,6 +369,7 @@ function handleSync(event) {
     return true;
 }
 
+// ── Flag modal ────────────────────────────────────────────────────────────────
 function openFlagModal(ticketKey) {
     document.getElementById('flagModal').classList.remove('hidden');
     document.getElementById('modalTicketKey').textContent = ticketKey;
@@ -379,10 +380,39 @@ function closeFlagModal() {
     document.getElementById('flagModal').classList.add('hidden');
 }
 
-// Tutup modal saat klik di luar
 document.getElementById('flagModal').addEventListener('click', function(e) {
     if (e.target === this) closeFlagModal();
 });
+
+// ── Real-time Records Tersedia ────────────────────────────────────────────────
+// Setiap kali start_date / end_date berubah, kirim request ringan ke server
+// dengan parameter records_only=1 → server hanya return JSON {total: N}
+// tanpa render seluruh halaman.
+// Debounce 400ms supaya tidak flood request.
+let recordsTimer = null;
+
+function updateRecords() {
+    const start = document.getElementById('startInput').value;
+    const end   = document.getElementById('endInput').value;
+    if (!start || !end || start > end) return;
+
+    document.getElementById('recordsCount').textContent = '...';
+
+    clearTimeout(recordsTimer);
+    recordsTimer = setTimeout(() => {
+        fetch(`?start_date=${start}&end_date=${end}&records_only=1`)
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('recordsCount').textContent = '~' + data.total;
+            })
+            .catch(() => {
+                document.getElementById('recordsCount').textContent = '?';
+            });
+    }, 400);
+}
+
+document.getElementById('startInput').addEventListener('change', updateRecords);
+document.getElementById('endInput').addEventListener('change',   updateRecords);
 </script>
 
 {% endblock %}

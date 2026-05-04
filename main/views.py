@@ -1,3 +1,11 @@
+# ============================================================
+# main/views.py
+#
+# Hanya menangani HTTP request/response cycle.
+# Logika bisnis → services.py
+# Pure utilities → utils.py
+# ============================================================
+
 from functools import wraps
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
@@ -7,11 +15,21 @@ from django.contrib import messages
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.utils import timezone
 from django.db.models import Avg, Count, Q, Min, Max
+from django.db.models import Case, When, Value, IntegerField, Max as MaxId
 from django.core.paginator import Paginator
+from django.conf import settings
+from datetime import date, datetime
+
+from requests import request
+
 from main.models import User, RawTicket, SyncLog, FlagHistory, ErrorTicket
-from main.process_groups import enrich_ticket
-from datetime import date, timedelta, datetime
-import requests
+from main.process_groups import enrich_ticket, get_platform
+from main.utils import hitung_cycle_time, get_page_range
+from main.services import hitung_available_records, sync_jira_data
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ======================================================
@@ -29,10 +47,11 @@ def role_required(role_name):
         return wrapper
     return decorator
 
-#
+
 def get_published_syncs():
-    """Hanya data yang sudah di-publish via tombol Create Dashboard"""
+    """Hanya data yang sudah di-publish via tombol Create Dashboard."""
     return SyncLog.objects.filter(status='published').values_list('id', flat=True)
+
 
 # ======================================================
 # AUTHENTICATION
@@ -41,7 +60,6 @@ def login_view(request):
     if request.user.is_authenticated:
         return redirect_by_role(request.user)
 
-    # Flush semua messages sisa di session agar tidak bocor ke halaman lain
     storage = messages.get_messages(request)
     list(storage)
     storage.used = True
@@ -77,11 +95,9 @@ def redirect_by_role(user):
 # ======================================================
 # DASHBOARD ADMIN
 # ======================================================
-
 def get_dashboard_filter_options():
     """Ambil semua nilai unik untuk filter dropdown di dashboard."""
     from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
-    
     published = get_published_syncs()
 
     years_qs = RawTicket.objects.filter(
@@ -99,12 +115,13 @@ def get_dashboard_filter_options():
         'all_processes': sorted(set(PROCESS_GROUP.keys())),
     }
 
+
 @login_required
 @role_required('admin')
 def dashboard_admin(request):
     published = get_published_syncs()
-    
-    total_main    = RawTicket.objects.filter(parent_key__isnull=True, sync_log__in=published).count()
+
+    total_main    = RawTicket.objects.filter(parent_key__isnull=True,  sync_log__in=published).count()
     total_sub     = RawTicket.objects.filter(parent_key__isnull=False, sync_log__in=published).count()
     total_flagged = ErrorTicket.objects.count()
     last_sync     = SyncLog.objects.order_by('-started_at').first()
@@ -125,182 +142,68 @@ def dashboard_admin(request):
 # ======================================================
 # SYNC
 # ======================================================
-MOCK_JIRA_BASE = "http://localhost:8000/mock-jira/api"
-
-
-def ambil_semua_halaman(url, params, timeout=30):
-    hasil    = []
-    page     = 1
-    key_data = None
-
-    while True:
-        params['page']      = page
-        params['page_size'] = 500
-
-        resp = requests.get(url, params=params, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
-
-        if key_data is None:
-            for k in data:
-                if k not in ('total', 'page', 'page_size', 'total_pages'):
-                    key_data = k
-                    break
-
-        items       = data.get(key_data, [])
-        hasil      += items
-        total_pages = data.get('total_pages', 1)
-
-        if page >= total_pages:
-            break
-        page += 1
-
-    return hasil
-
-
 @login_required
 @role_required('admin')
 def admin_sync(request):
 
     BULAN_ID = {
-        1:'Januari', 2:'Februari', 3:'Maret', 4:'April',
-        5:'Mei', 6:'Juni', 7:'Juli', 8:'Agustus',
-        9:'September', 10:'Oktober', 11:'November', 12:'Desember'
+        1:'Januari', 2:'Februari', 3:'Maret',    4:'April',
+        5:'Mei',     6:'Juni',     7:'Juli',      8:'Agustus',
+        9:'September',10:'Oktober',11:'November', 12:'Desember',
     }
-
+    # untuk membuat tampilan range tgl yang sudah ada di sistem.
     def get_data_range_str():
         dr = RawTicket.objects.filter(start_date__isnull=False).aggregate(
             earliest=Min('start_date'), latest=Max('start_date')
         )
         e, l = dr['earliest'], dr['latest']
         if e and l:
-            return f"{BULAN_ID[e.month]} {e.year} — {BULAN_ID[l.month]} {l.year}"
+            # SEBELUM: hanya bulan dan tahun
+            # return f"{BULAN_ID[e.month]} {e.year} — {BULAN_ID[l.month]} {l.year}"
+            # SESUDAH: tanggal lengkap
+            return f"{e.day} {BULAN_ID[e.month]} {e.year} — {l.day} {BULAN_ID[l.month]} {l.year}"
         return None
 
-    # ── POST: sync / flag / unflag ───────────────────────────────────────────
+    # ── POST ─────────────────────────────────────────────────────────────────
     if request.method == 'POST':
         action = request.POST.get('action')
 
-        # ── Jalankan sync ──
+        # ── Sync ─────────────────────────────────────────────────────────────
         if action == 'sync':
             start_date = request.POST.get('start_date')
             end_date   = request.POST.get('end_date')
 
-            sync_log = SyncLog.objects.create(
-                admin=request.user, started_at=timezone.now(), status='running'
-            )
-            total_fetched = total_processed = total_errors = 0
+            sync_log, result = sync_jira_data(request.user, start_date, end_date)
 
-            try:
-                all_main = ambil_semua_halaman(
-                    url=f"{MOCK_JIRA_BASE}/issues/",
-                    params={'start_after': start_date, 'start_before': end_date}
-                )
-                total_fetched = len(all_main)
-                main_map = {m['key']: m['fields'] for m in all_main}
+            if result.success:
+                if result.error_type == 'empty':
+                    messages.warning(request,
+                        "⚠️ Tidak ada sub-ticket Completed dalam range tanggal tersebut.")
+                elif result.total_skipped > 0 and result.total_processed == 0:
+                    messages.warning(request,
+                        f"⚠️ Semua {result.total_skipped} ticket di range ini sudah ada di database. "
+                        f"Tidak ada data baru yang ditambahkan.")
+                elif result.total_skipped > 0:
+                    messages.success(request,
+                        f"✅ Sync berhasil! {result.total_processed} ticket baru disimpan. "
+                        f"{result.total_skipped} ticket sudah ada di database (dilewati).")
+                else:
+                    messages.success(request,
+                        f"✅ Sync berhasil! {result.total_processed} ticket baru disimpan.")
+            else:
+                if result.error_type == 'connection':
+                    messages.error(request,
+                        f"❌ Sync gagal: Tidak dapat terhubung ke Mock Jira API ({result.error_detail}).")
+                elif result.error_type == 'timeout':
+                    messages.error(request, "❌ Sync gagal: Request ke Mock Jira API timeout.")
+                else:
+                    messages.error(request, f"❌ Sync gagal: {result.error_detail}")
 
-                all_sub = ambil_semua_halaman(
-                    url=f"{MOCK_JIRA_BASE}/sub-issues/",
-                    params={
-                        'start_after':  start_date,   # start_date >= tgl mulai
-                        'start_before': end_date,     # start_date <= tgl akhir
-                        'status':     'Completed',  # sistem hanya ambil yang selesai
-                    }
-                )
+            from django.urls import reverse
+            url = f"{reverse('admin_sync')}?start_date={start_date}&end_date={end_date}"
+            return redirect(url)
 
-                # ── Kumpulkan parent_key yang hilang dari main_map ────
-                # Ambil langsung dari DB lokal (jauh lebih cepat dari HTTP request)
-                all_parent_keys     = set(sub['fields']['parent']['key'] for sub in all_sub)
-                missing_parent_keys = all_parent_keys - set(main_map.keys())
-
-                if missing_parent_keys:
-                    from mock_jira.models import JiraMainTicket
-                    db_parents = JiraMainTicket.objects.filter(
-                        issue_key__in=missing_parent_keys
-                    ).values('issue_key', 'package')
-
-                    for parent in db_parents:
-                        main_map[parent['issue_key']] = {
-                            'package': parent['package'],
-                        }
-
-                # ── Siapkan semua objek ───────────────────────────────
-                all_objects = []
-
-                for main in all_main:
-                    fields = main['fields']
-                    all_objects.append(RawTicket(
-                        ticket_key         = main['key'],
-                        parent_key         = None,
-                        platform           = fields.get('package', ''),
-                        summary            = f"Main ticket {main['key']}",
-                        status             = fields['status']['name'],
-                        start_date         = None,
-                        due_date           = None,
-                        cycle_time         = None,
-                        package_name       = fields.get('package', ''),
-                        predefined_process = None,
-                        sync_log           = sync_log,
-                    ))
-
-                for sub in all_sub:
-                    sf  = sub['fields']
-                    spk = sf['parent']['key']
-                    pf  = main_map.get(spk, {})
-                    ct  = hitung_cycle_time(sf.get('start_date'), sf.get('due_date'))
-                    proc = sf.get('predefined_process', '')
-                    all_objects.append(RawTicket(
-                        ticket_key         = sub['key'],
-                        parent_key         = spk,
-                        platform           = pf.get('package', ''),
-                        summary            = f"{proc} - {spk}",
-                        status             = sf['status']['name'],
-                        start_date         = sf.get('start_date') or None,
-                        due_date           = sf.get('due_date')   or None,
-                        cycle_time         = ct,
-                        package_name       = pf.get('package', ''),
-                        predefined_process = proc,
-                        sync_log           = sync_log,
-                    ))
-
-                # ── Bulk upsert: insert baru, update yang sudah ada ───
-                update_fields = [
-                    'parent_key', 'platform', 'summary', 'status',
-                    'start_date', 'due_date', 'cycle_time',
-                    'package_name', 'predefined_process', 'sync_log',
-                ]
-                for i in range(0, len(all_objects), 500):
-                    batch = all_objects[i:i+500]
-                    RawTicket.objects.bulk_create(
-                        batch,
-                        update_conflicts = True,
-                        unique_fields    = ['ticket_key'],
-                        update_fields    = update_fields,
-                        batch_size       = 500,
-                    )
-                total_processed = len(all_objects)
-
-
-                sync_log.finished_at     = timezone.now()
-                sync_log.total_fetched   = total_fetched
-                sync_log.total_processed = total_processed
-                sync_log.total_errors    = total_errors
-                sync_log.status          = 'success'
-                sync_log.save()
-
-                messages.success(request,
-                    f"✅ Sync successful! {total_processed} tickets processed."
-                )
-
-            except Exception as e:
-                sync_log.finished_at = timezone.now()
-                sync_log.status      = 'failed'
-                sync_log.save()
-                messages.error(request, f"❌ Sync failed: {str(e)}")
-
-            return redirect('admin_sync')
-
-        # ── Flag ticket ──
+        # ── Flag ──────────────────────────────────────────────────────────────
         elif action == 'flag':
             ticket_key = request.POST.get('ticket_key')
             comment    = request.POST.get('comment', '')
@@ -323,7 +226,7 @@ def admin_sync(request):
                 messages.error(request, "Ticket not found.")
             return redirect('admin_sync')
 
-        # ── Unflag ticket ──
+        # ── Unflag ────────────────────────────────────────────────────────────
         elif action == 'unflag':
             ticket_key = request.POST.get('ticket_key')
             try:
@@ -334,9 +237,8 @@ def admin_sync(request):
                 messages.error(request, "Ticket not found.")
             return redirect('admin_sync')
 
-        # ── Create Dashboard ──
+        # ── Create Dashboard ──────────────────────────────────────────────────
         elif action == 'create_dashboard':
-            # Cek: tidak boleh ada flagged ticket
             flagged_count = ErrorTicket.objects.count()
             if flagged_count > 0:
                 messages.error(request,
@@ -345,7 +247,6 @@ def admin_sync(request):
                 )
                 return redirect('admin_sync')
 
-            # Tandai sync terakhir sebagai 'published'
             last_sync = SyncLog.objects.filter(status='success').order_by('-started_at').first()
             if not last_sync:
                 messages.error(request, "❌ No successful sync data found to publish.")
@@ -354,39 +255,27 @@ def admin_sync(request):
             last_sync.status = 'published'
             last_sync.save(update_fields=['status'])
             messages.success(request,
-                "✅ Dashboard created successfully! Clean data is now available in Reports."
-            )
+                "✅ Dashboard created successfully! Clean data is now available in Reports.")
             return redirect('admin_sync')
 
-    # ── GET: tampilkan halaman ───────────────────────────────────────────────
+    # ── GET ───────────────────────────────────────────────────────────────────
     today      = date.today()
-    start_date = str(today.replace(day=1))
-    end_date   = str(today)
+    start_date = request.GET.get('start_date') or str(today.replace(day=1))
+    end_date   = request.GET.get('end_date')   or str(today)
+    
+    if request.GET.get('records_only') == '1':
+        total, _ = hitung_available_records(start_date, end_date)
+        return JsonResponse({'total': total})
 
-    # Records Tersedia: jumlah sub ticket Completed sesuai range tanggal default
-    try:
-        from mock_jira.models import JiraSubTicket as JiraSubModel
-        total = JiraSubModel.objects.filter(
-            status='Completed',
-            due_date__gte=start_date,
-            due_date__lte=end_date,
-        ).count()
-        error = None
-    except Exception as e:
-        total = 0
-        error = f"Tidak bisa menghitung records: {str(e)}"
+    total, error = hitung_available_records(start_date, end_date)
 
-    # ── Tabel: hanya data dari sync terakhir ──────────────────────────────
     query       = request.GET.get('q', '')
     page_number = request.GET.get('page', 1)
     per_page    = int(request.GET.get('per_page', 10))
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    # Hanya tampilkan data dari sync yang belum dipublish (status='success')
-    # Setelah Create Dashboard, status berubah ke 'published' → tabel kosong
-    # sampai ada sync baru
-    last_sync = SyncLog.objects.filter(status='success').order_by('-started_at').first()
+    last_sync     = SyncLog.objects.filter(status='success').order_by('-started_at').first()
     flagged_count = ErrorTicket.objects.count()
 
     sync_data      = []
@@ -401,26 +290,27 @@ def admin_sync(request):
     ).count() if last_sync else 0
 
     if last_sync:
-        # Filter ketat hanya dari sync_log yang belum dipublish
-        # agar data lama (sudah published) tidak ikut tampil
-        qs = RawTicket.objects.filter(
+        base_qs = RawTicket.objects.filter(
             parent_key__isnull=False,
             sync_log=last_sync,
-        ).order_by('ticket_key')
-
+        )
         if query:
-            qs = qs.filter(ticket_key__icontains=query)
+            base_qs = base_qs.filter(ticket_key__icontains=query)
 
-        # ── Deduplikasi: ambil 1 per ticket_key (id terbesar = terbaru) ──
-        from django.db.models import Max as MaxId
         latest_ids = (
-            RawTicket.objects
-            .filter(id__in=qs.values('id'))
-            .values('ticket_key')
+            base_qs.values('ticket_key')
             .annotate(max_id=MaxId('id'))
             .values_list('max_id', flat=True)
         )
-        qs = RawTicket.objects.filter(id__in=latest_ids).order_by('ticket_key')
+
+        qs = RawTicket.objects.filter(id__in=latest_ids).annotate(
+            error_priority=Case(
+                When(cycle_time__lt=0,        then=Value(0)),
+                When(cycle_time__isnull=True, then=Value(1)),
+                default=Value(2),
+                output_field=IntegerField(),
+            )
+        ).order_by('error_priority', 'ticket_key')
 
         flagged_keys   = set(ErrorTicket.objects.values_list('ticket__ticket_key', flat=True))
         total_filtered = qs.count()
@@ -435,6 +325,7 @@ def admin_sync(request):
                 'ticket_key':         t.ticket_key,
                 'parent_key':         t.parent_key,
                 'platform':           t.platform,
+                'package_name':       t.package_name,
                 'predefined_process': t.predefined_process,
                 'status':             t.status,
                 'start_date':         t.start_date,
@@ -447,46 +338,32 @@ def admin_sync(request):
         page_range = get_page_range(page_obj.number, paginator.num_pages)
 
     context = {
-        'start_date':     start_date,
-        'end_date':       end_date,
-        'total':          total,
-        'data_range_str': get_data_range_str(),
-        'error':          error,
-        'last_sync':      last_sync,
-        # tabel
-        'sync_data':      sync_data,
-        'query':          query,
-        'per_page':       per_page,
-        'page_obj':       page_obj,
-        'paginator':      paginator,
-        'page_range':     page_range,
-        'start_index':    start_index,
-        'end_index':      end_index,
-        'total_filtered': total_filtered,
-        'total_all':      total_all_raw,
-        'flagged_count':  flagged_count,
-        'clean_count':    total_all_raw - flagged_count,
+        'start_date':      start_date,
+        'end_date':        end_date,
+        'total':           total,
+        'data_range_str':  get_data_range_str(),
+        'error':           error,
+        'last_sync':       last_sync,
+        'sync_data':       sync_data,
+        'query':           query,
+        'per_page':        per_page,
+        'page_obj':        page_obj,
+        'paginator':       paginator,
+        'page_range':      page_range,
+        'start_index':     start_index,
+        'end_index':       end_index,
+        'total_filtered':  total_filtered,
+        'total_all':       total_all_raw,
+        'flagged_count':   flagged_count,
+        'clean_count':     total_all_raw - flagged_count,
         'has_unpublished': last_sync is not None,
         'has_published':   SyncLog.objects.filter(status='published').exists(),
     }
     return render(request, 'main/admin/sync.html', context)
 
 
-def hitung_cycle_time(start_date_str, due_date_str):
-    if not start_date_str or not due_date_str:
-        return None
-    try:
-        start = datetime.strptime(start_date_str, '%Y-%m-%d').date()
-        end   = datetime.strptime(due_date_str,   '%Y-%m-%d').date()
-        # +1 hitung hari pertama; nilai negatif = data error (due < start)
-        delta = (end - start).days + 1
-        return float(delta)
-    except Exception:
-        return None
-
-
 # ======================================================
-# DATA MANAGEMENT — dengan pagination
+# DATA MANAGEMENT
 # ======================================================
 @login_required
 @role_required('admin')
@@ -497,7 +374,6 @@ def admin_data(request):
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    # ── POST: edit atau resolve ──────────────────────────────────────────────
     if request.method == 'POST':
         action     = request.POST.get('action')
         ticket_key = request.POST.get('ticket_key')
@@ -505,9 +381,7 @@ def admin_data(request):
         if action == 'resolve':
             try:
                 ticket = RawTicket.objects.get(ticket_key=ticket_key)
-                # Hapus flag
                 ErrorTicket.objects.filter(ticket=ticket).delete()
-                # Update sync_log ke sync terakhir supaya muncul di tabel sync
                 last_sync = SyncLog.objects.filter(status='success').order_by('-started_at').first()
                 if last_sync:
                     ticket.sync_log = last_sync
@@ -529,22 +403,19 @@ def admin_data(request):
                 ticket.predefined_process = new_proc
                 ticket.cycle_time         = hitung_cycle_time(new_start, new_due)
                 ticket.save()
-
                 messages.success(request, f"Ticket {ticket_key} has been updated.")
             except RawTicket.DoesNotExist:
                 messages.error(request, "Ticket not found.")
             return redirect('admin_data')
 
-    # ── GET: tampilkan flagged tickets ───────────────────────────────────────
     flagged_ids = ErrorTicket.objects.values_list('ticket_id', flat=True)
     qs = RawTicket.objects.filter(id__in=flagged_ids).order_by('-id')
 
     if query:
         qs = qs.filter(ticket_key__icontains=query)
 
-    # Error message & flagged_by per ticket
-    error_qs = ErrorTicket.objects.select_related('ticket', 'flagged_by').all()
-    error_map      = {e.ticket_id: e.error_message                           for e in error_qs}
+    error_qs       = ErrorTicket.objects.select_related('ticket', 'flagged_by').all()
+    error_map      = {e.ticket_id: e.error_message for e in error_qs}
     flagged_by_map = {e.ticket_id: e.flagged_by.username if e.flagged_by else '—' for e in error_qs}
 
     total_all_raw  = RawTicket.objects.filter(parent_key__isnull=False).count()
@@ -562,6 +433,7 @@ def admin_data(request):
         item = {
             'ticket_key':         t.ticket_key,
             'platform':           t.platform,
+            'package_name':       t.package_name,
             'predefined_process': t.predefined_process,
             'status':             t.status,
             'start_date':         t.start_date,
@@ -587,34 +459,6 @@ def admin_data(request):
         'total_ok':       total_ok,
     }
     return render(request, 'main/admin/data.html', context)
-
-def get_page_range(current, total_pages, window=2):
-    """
-    Buat range nomor halaman dengan ellipsis.
-    Contoh: [1, '...', 4, 5, 6, '...', 16]
-    """
-    pages = []
-
-    # Selalu tampilkan halaman pertama
-    pages.append(1)
-
-    start = max(2, current - window)
-    end   = min(total_pages - 1, current + window)
-
-    if start > 2:
-        pages.append('...')
-
-    for p in range(start, end + 1):
-        pages.append(p)
-
-    if end < total_pages - 1:
-        pages.append('...')
-
-    # Selalu tampilkan halaman terakhir
-    if total_pages > 1:
-        pages.append(total_pages)
-
-    return pages
 
 
 # ======================================================
@@ -685,10 +529,9 @@ def admin_reports(request):
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    # Hanya tampilkan data dari sync yang sudah dipublish (status='published')
     published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
     qs = RawTicket.objects.filter(
-        sync_log__in=published_syncs
+        sync_log__in=published_syncs, parent_key__isnull=False
     ).order_by('ticket_key')
 
     if query:
@@ -702,22 +545,15 @@ def admin_reports(request):
     if date_to:
         qs = qs.filter(start_date__lte=date_to)
 
-    # ── Deduplikasi berdasarkan ticket_key ────────────────────────────────
-    seen       = set()
-    unique_ids = []
+    seen, unique_ids = set(), []
     for t in qs.values('id', 'ticket_key'):
         if t['ticket_key'] not in seen:
             seen.add(t['ticket_key'])
             unique_ids.append(t['id'])
     qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
 
-    # Summary stats: pisah main vs sub ticket
-    total_main     = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=True
-    ).count()
-    total_sub      = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=False
-    ).count()
+    total_main     = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=True).count()
+    total_sub      = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=False).count()
     total_filtered = qs.count()
 
     paginator   = Paginator(qs, per_page)
@@ -731,6 +567,7 @@ def admin_reports(request):
             'ticket_key':         t.ticket_key,
             'parent_key':         t.parent_key,
             'platform':           t.platform,
+            'package_name':       t.package_name,
             'predefined_process': t.predefined_process,
             'status':             t.status,
             'start_date':         t.start_date,
@@ -772,9 +609,10 @@ def download_report(request):
     date_from = request.GET.get('date_from', '')
     date_to   = request.GET.get('date_to', '')
 
-    # Ambil data yang sama seperti admin_reports
     published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
-    qs = RawTicket.objects.filter(sync_log__in=published_syncs).order_by('ticket_key')
+    qs = RawTicket.objects.filter(
+        sync_log__in=published_syncs, parent_key__isnull=False
+    ).order_by('ticket_key')
 
     if query:
         qs = qs.filter(
@@ -787,7 +625,6 @@ def download_report(request):
     if date_to:
         qs = qs.filter(start_date__lte=date_to)
 
-    # Deduplikasi
     seen, unique_ids = set(), []
     for t in qs.values('id', 'ticket_key'):
         if t['ticket_key'] not in seen:
@@ -795,25 +632,21 @@ def download_report(request):
             unique_ids.append(t['id'])
     qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
 
-    # ── Build PDF ─────────────────────────────────────────────────────────────
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=landscape(A4),
         leftMargin=1*cm, rightMargin=1*cm,
         topMargin=1.5*cm, bottomMargin=1.5*cm,
     )
-
-    styles = getSampleStyleSheet()
+    styles   = getSampleStyleSheet()
     elements = []
 
-    # Judul
     title_style = ParagraphStyle(
         'ReportTitle', parent=styles['Heading1'],
         fontSize=14, spaceAfter=4, textColor=colors.HexColor('#1e293b'),
     )
     elements.append(Paragraph("Clean Ticket Report", title_style))
 
-    # Info filter
     sub_parts = []
     if query:     sub_parts.append(f"Search: {query}")
     if date_from: sub_parts.append(f"From: {date_from}")
@@ -823,7 +656,6 @@ def download_report(request):
     elements.append(Paragraph("  |  ".join(sub_parts), styles['Normal']))
     elements.append(Spacer(1, 0.5*cm))
 
-    # Header tabel
     headers = [
         'No', 'Ticket ID', 'Parent', 'Package', 'Platform',
         'Process', 'Stage', 'Area', 'Start Date', 'Due Date', 'CT (days)', 'Status',
@@ -835,6 +667,7 @@ def download_report(request):
             'ticket_key':         t.ticket_key,
             'parent_key':         t.parent_key,
             'platform':           t.platform,
+            'package_name':       t.package_name,
             'predefined_process': t.predefined_process,
             'status':             t.status,
             'start_date':         t.start_date,
@@ -842,7 +675,7 @@ def download_report(request):
             'cycle_time':         t.cycle_time,
         }
         enriched = enrich_ticket(item)
-        ct_val = f"{enriched['cycle_time']:.1f}" if enriched.get('cycle_time') else '—'
+        ct_val   = f"{enriched['cycle_time']:.1f}" if enriched.get('cycle_time') else '—'
         table_data.append([
             str(i),
             enriched.get('ticket_key', '—'),
@@ -862,28 +695,21 @@ def download_report(request):
         0.8*cm, 2.8*cm, 2.8*cm, 2.5*cm, 2.5*cm,
         3.2*cm, 2.5*cm, 2.5*cm, 2.2*cm, 2.2*cm, 1.8*cm, 2.2*cm,
     ]
-
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
-        # Header
         ('BACKGROUND',    (0, 0), (-1, 0),  colors.HexColor('#1e293b')),
         ('TEXTCOLOR',     (0, 0), (-1, 0),  colors.white),
         ('FONTNAME',      (0, 0), (-1, 0),  'Helvetica-Bold'),
         ('FONTSIZE',      (0, 0), (-1, 0),  7),
-        # Body
         ('FONTSIZE',      (0, 1), (-1, -1), 6.5),
         ('FONTNAME',      (0, 1), (-1, -1), 'Helvetica'),
-        # Alignment
         ('ALIGN',         (0, 0), (-1, -1), 'CENTER'),
-        ('ALIGN',         (1, 1), (2, -1),  'LEFT'),   # Ticket ID & Parent kiri
-        ('ALIGN',         (5, 1), (7, -1),  'LEFT'),   # Process/Stage/Area kiri
+        ('ALIGN',         (1, 1), (2, -1),  'LEFT'),
+        ('ALIGN',         (5, 1), (7, -1),  'LEFT'),
         ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
-        # Row stripes
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f1f5f9')]),
-        # Grid
+        ('ROWBACKGROUNDS',(0, 1), (-1, -1), [colors.white, colors.HexColor('#f1f5f9')]),
         ('GRID',          (0, 0), (-1, -1), 0.4, colors.HexColor('#cbd5e1')),
         ('LINEBELOW',     (0, 0), (-1, 0),  1.2, colors.HexColor('#3b82f6')),
-        # Padding
         ('TOPPADDING',    (0, 0), (-1, -1), 3),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
         ('LEFTPADDING',   (0, 0), (-1, -1), 4),
@@ -912,9 +738,10 @@ def download_report_excel(request):
     date_from = request.GET.get('date_from', '')
     date_to   = request.GET.get('date_to', '')
 
-    # Ambil data — logika sama persis seperti download_report (PDF)
     published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
-    qs = RawTicket.objects.filter(sync_log__in=published_syncs).order_by('ticket_key')
+    qs = RawTicket.objects.filter(
+        sync_log__in=published_syncs, parent_key__isnull=False
+    ).order_by('ticket_key')
 
     if query:
         qs = qs.filter(
@@ -927,7 +754,6 @@ def download_report_excel(request):
     if date_to:
         qs = qs.filter(start_date__lte=date_to)
 
-    # Deduplikasi — sama seperti PDF
     seen, unique_ids = set(), []
     for t in qs.values('id', 'ticket_key'):
         if t['ticket_key'] not in seen:
@@ -935,12 +761,10 @@ def download_report_excel(request):
             unique_ids.append(t['id'])
     qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
 
-    # ── Build Excel ───────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Ticket Report"
 
-    # Style constants
     COLOR_HEADER_BG = '1E293B'
     COLOR_HEADER_FG = 'FFFFFF'
     COLOR_ROW_ODD   = 'FFFFFF'
@@ -961,15 +785,13 @@ def download_report_excel(request):
         bottom=Side(style='medium', color=COLOR_ACCENT),
     )
 
-    # Baris 1: Judul
     ws.merge_cells('A1:L1')
     title_cell = ws['A1']
-    title_cell.value = 'Clean Ticket Report'
+    title_cell.value     = 'Clean Ticket Report'
     title_cell.font      = Font(name='Calibri', bold=True, size=14, color=COLOR_HEADER_BG)
     title_cell.alignment = Alignment(horizontal='left', vertical='center')
     ws.row_dimensions[1].height = 24
 
-    # Baris 2: Info filter — sama seperti yang ditampilkan di PDF
     ws.merge_cells('A2:L2')
     info_parts = []
     if query:     info_parts.append(f"Search: {query}")
@@ -978,28 +800,16 @@ def download_report_excel(request):
     info_parts.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     info_parts.append(f"Total records: {qs.count()}")
     info_cell = ws['A2']
-    info_cell.value = '  |  '.join(info_parts)
+    info_cell.value     = '  |  '.join(info_parts)
     info_cell.font      = Font(name='Calibri', size=9, color='64748B')
     info_cell.alignment = Alignment(horizontal='left', vertical='center')
     ws.row_dimensions[2].height = 16
-
-    # Baris 3: Spasi
     ws.row_dimensions[3].height = 6
 
-    # Baris 4: Header tabel
     HEADERS = [
-        ('No',         5),
-        ('Ticket ID',  14),
-        ('Parent',     14),
-        ('Package',    14),
-        ('Platform',   14),
-        ('Process',    18),
-        ('Stage',      14),
-        ('Area',       16),
-        ('Start Date', 13),
-        ('Due Date',   13),
-        ('CT (days)',  10),
-        ('Status',     13),
+        ('No', 5), ('Ticket ID', 14), ('Parent', 14), ('Package', 14), ('Platform', 14),
+        ('Process', 18), ('Stage', 14), ('Area', 16), ('Start Date', 13),
+        ('Due Date', 13), ('CT (days)', 10), ('Status', 13),
     ]
     header_fill  = PatternFill('solid', fgColor=COLOR_HEADER_BG)
     header_font  = Font(name='Calibri', bold=True, size=9, color=COLOR_HEADER_FG)
@@ -1014,7 +824,6 @@ def download_report_excel(request):
         ws.column_dimensions[get_column_letter(col_idx)].width = width
     ws.row_dimensions[4].height = 20
 
-    # Baris 5+: Data
     center_align = Alignment(horizontal='center', vertical='center')
     left_align   = Alignment(horizontal='left',   vertical='center')
     ct_font      = Font(name='Calibri', size=9, bold=True, color='1D4ED8')
@@ -1026,29 +835,23 @@ def download_report_excel(request):
             'ticket_key':         t.ticket_key,
             'parent_key':         t.parent_key,
             'platform':           t.platform,
+            'package_name':       t.package_name,
             'predefined_process': t.predefined_process,
             'status':             t.status,
             'start_date':         t.start_date,
             'due_date':           t.due_date,
             'cycle_time':         t.cycle_time,
         }
-        e = enrich_ticket(item)
-        ct_val   = round(e['cycle_time'], 1) if e.get('cycle_time') else None
+        e      = enrich_ticket(item)
+        ct_val = round(e['cycle_time'], 1) if e.get('cycle_time') else None
         row_fill = PatternFill('solid', fgColor=COLOR_ROW_ODD if i % 2 else COLOR_ROW_EVEN)
 
         values = [
-            i,
-            e.get('ticket_key', ''),
-            e.get('parent_key') or '',
-            e.get('platform') or '',
-            e.get('platform_group') or '',
-            e.get('predefined_process') or '',
-            e.get('process_stage') or '',
-            e.get('process_area') or '',
-            str(e.get('start_date') or ''),
-            str(e.get('due_date') or ''),
-            ct_val,
-            e.get('status', ''),
+            i, e.get('ticket_key',''), e.get('parent_key') or '',
+            e.get('platform') or '', e.get('platform_group') or '',
+            e.get('predefined_process') or '', e.get('process_stage') or '',
+            e.get('process_area') or '', str(e.get('start_date') or ''),
+            str(e.get('due_date') or ''), ct_val, e.get('status',''),
         ]
         aligns = [
             center_align, left_align, left_align, left_align, left_align,
@@ -1063,7 +866,6 @@ def download_report_excel(request):
             cell.font      = ct_font if col_idx == 11 and val is not None else base_font
         ws.row_dimensions[row_num].height = 16
 
-    # Freeze header & auto-filter
     ws.freeze_panes = 'A5'
     ws.auto_filter.ref = f"A4:L{ws.max_row}"
 
@@ -1086,10 +888,9 @@ def download_report_excel(request):
 @login_required
 @role_required('staff')
 def dashboard_staff(request):
-    total_ticket  = RawTicket.objects.filter(parent_key__isnull=False).count()
-    avg_ct        = RawTicket.objects.filter(
-                        cycle_time__isnull=False
-                    ).aggregate(avg=Avg('cycle_time'))['avg']
+    published     = get_published_syncs()
+    total_ticket  = RawTicket.objects.filter(parent_key__isnull=False, sync_log__in=published).count()
+    avg_ct        = RawTicket.objects.filter(cycle_time__isnull=False, sync_log__in=published).aggregate(avg=Avg('cycle_time'))['avg']
     avg_ct        = round(avg_ct, 1) if avg_ct else 0
     total_flagged = ErrorTicket.objects.count()
 
@@ -1116,7 +917,6 @@ def staff_view_data(request):
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    # ── POST: flag ticket (masuk ke Data Management admin) ──────────────────
     if request.method == 'POST':
         action     = request.POST.get('action')
         ticket_key = request.POST.get('ticket_key')
@@ -1142,9 +942,7 @@ def staff_view_data(request):
                 messages.error(request, "Ticket not found.")
         return redirect('staff_view_data')
 
-    # ── GET: tampilkan data dari sync terakhir ───────────────────────────────
-    last_sync = SyncLog.objects.filter(status='success').order_by('-started_at').first()
-
+    last_sync      = SyncLog.objects.filter(status='success').order_by('-started_at').first()
     sync_data      = []
     paginator      = None
     page_obj       = None
@@ -1155,40 +953,24 @@ def staff_view_data(request):
     total_all_raw  = RawTicket.objects.filter(parent_key__isnull=False).count()
 
     if last_sync:
-        sync_date_range = RawTicket.objects.filter(
-            sync_log=last_sync, start_date__isnull=False
-        ).aggregate(earliest=Min('start_date'), latest=Max('start_date'))
-
-        earliest_date = sync_date_range['earliest']
-        latest_date   = sync_date_range['latest']
-
-        if earliest_date and latest_date:
-            qs = RawTicket.objects.filter(
-                parent_key__isnull=False,
-                start_date__gte=earliest_date,
-                start_date__lte=latest_date,
-            ).order_by('ticket_key')
-        else:
-            qs = RawTicket.objects.filter(
-                parent_key__isnull=False,
-                sync_log=last_sync,
-            ).order_by('ticket_key')
+        #untuk membuat minus muncul di awal
+        qs = RawTicket.objects.filter(
+            parent_key__isnull=False,
+            sync_log=last_sync,
+        ).annotate(
+            error_priority=Case(
+                When(cycle_time__lt=0,        then=Value(0)),
+                When(cycle_time__isnull=True, then=Value(1)),
+                default=Value(2),
+                output_field=IntegerField(),
+            )
+        ).order_by('error_priority', 'ticket_key')
 
         if query:
             qs = qs.filter(
                 Q(ticket_key__icontains=query) |
                 Q(predefined_process__icontains=query)
             )
-
-        from django.db.models import Max as MaxId
-        latest_ids = (
-            RawTicket.objects
-            .filter(id__in=qs.values('id'))
-            .values('ticket_key')
-            .annotate(max_id=MaxId('id'))
-            .values_list('max_id', flat=True)
-        )
-        qs = RawTicket.objects.filter(id__in=latest_ids).order_by('ticket_key')
 
         flagged_keys   = set(ErrorTicket.objects.values_list('ticket__ticket_key', flat=True))
         total_filtered = qs.count()
@@ -1203,6 +985,7 @@ def staff_view_data(request):
                 'ticket_key':         t.ticket_key,
                 'parent_key':         t.parent_key,
                 'platform':           t.platform,
+                'package_name':       t.package_name,
                 'predefined_process': t.predefined_process,
                 'status':             t.status,
                 'start_date':         t.start_date,
@@ -1214,6 +997,26 @@ def staff_view_data(request):
             sync_data.append(enrich_ticket(item))
         page_range = get_page_range(page_obj.number, paginator.num_pages)
 
+    # ── Data range string ─────────────────────────────────────
+    BULAN_ID = {
+        1:'Januari', 2:'Februari', 3:'Maret',    4:'April',
+        5:'Mei',     6:'Juni',     7:'Juli',      8:'Agustus',
+        9:'September',10:'Oktober',11:'November', 12:'Desember',
+    }
+    dr = RawTicket.objects.filter(start_date__isnull=False).aggregate(
+        earliest=Min('start_date'), latest=Max('start_date')
+    )
+    e, l = dr['earliest'], dr['latest']
+    data_range_str = (
+        f"{e.day} {BULAN_ID[e.month]} {e.year} — {l.day} {BULAN_ID[l.month]} {l.year}"
+        if e and l else None
+    )
+
+    total_all_sync  = RawTicket.objects.filter(
+        parent_key__isnull=False, sync_log=last_sync
+    ).count() if last_sync else 0
+    flagged_count   = ErrorTicket.objects.count()
+    clean_count     = total_all_sync - flagged_count
     context = {
         'sync_data':      sync_data,
         'query':          query,
@@ -1226,6 +1029,9 @@ def staff_view_data(request):
         'total_filtered': total_filtered,
         'total_all':      total_all_raw,
         'last_sync':      last_sync,
+        'data_range_str': data_range_str,
+        'clean_count':    clean_count,
+        'flagged_count':  flagged_count,
     }
     return render(request, 'main/staff/view_data.html', context)
 
@@ -1244,10 +1050,9 @@ def staff_reports(request):
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    # Hanya tampilkan data dari sync yang sudah dipublish (status='published')
     published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
     qs = RawTicket.objects.filter(
-        sync_log__in=published_syncs
+        sync_log__in=published_syncs, parent_key__isnull=False
     ).order_by('ticket_key')
 
     if query:
@@ -1261,21 +1066,15 @@ def staff_reports(request):
     if date_to:
         qs = qs.filter(start_date__lte=date_to)
 
-    # Deduplikasi berdasarkan ticket_key
-    seen       = set()
-    unique_ids = []
+    seen, unique_ids = set(), []
     for t in qs.values('id', 'ticket_key'):
         if t['ticket_key'] not in seen:
             seen.add(t['ticket_key'])
             unique_ids.append(t['id'])
     qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
 
-    total_main     = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=True
-    ).count()
-    total_sub      = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=False
-    ).count()
+    total_main     = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=True).count()
+    total_sub      = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=False).count()
     total_filtered = qs.count()
 
     paginator   = Paginator(qs, per_page)
@@ -1289,6 +1088,7 @@ def staff_reports(request):
             'ticket_key':         t.ticket_key,
             'parent_key':         t.parent_key,
             'platform':           t.platform,
+            'package_name':       t.package_name,
             'predefined_process': t.predefined_process,
             'status':             t.status,
             'start_date':         t.start_date,
@@ -1322,10 +1122,9 @@ def staff_reports(request):
 @login_required
 @role_required('management')
 def dashboard_management(request):
-    total_ticket = RawTicket.objects.filter(parent_key__isnull=False).count()
-    avg_ct       = RawTicket.objects.filter(
-                       cycle_time__isnull=False
-                   ).aggregate(avg=Avg('cycle_time'))['avg']
+    published    = get_published_syncs()
+    total_ticket = RawTicket.objects.filter(parent_key__isnull=False, sync_log__in=published).count()
+    avg_ct       = RawTicket.objects.filter(cycle_time__isnull=False, sync_log__in=published).aggregate(avg=Avg('cycle_time'))['avg']
     avg_ct       = round(avg_ct, 1) if avg_ct else 0
 
     context = {
@@ -1352,10 +1151,9 @@ def management_reports(request):
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    # Hanya tampilkan data dari sync yang sudah dipublish (status='published')
     published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
     qs = RawTicket.objects.filter(
-        sync_log__in=published_syncs
+        sync_log__in=published_syncs, parent_key__isnull=False
     ).order_by('ticket_key')
 
     if query:
@@ -1369,21 +1167,15 @@ def management_reports(request):
     if date_to:
         qs = qs.filter(start_date__lte=date_to)
 
-    # Deduplikasi berdasarkan ticket_key
-    seen       = set()
-    unique_ids = []
+    seen, unique_ids = set(), []
     for t in qs.values('id', 'ticket_key'):
         if t['ticket_key'] not in seen:
             seen.add(t['ticket_key'])
             unique_ids.append(t['id'])
     qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
 
-    total_main     = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=True
-    ).count()
-    total_sub      = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=False
-    ).count()
+    total_main     = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=True).count()
+    total_sub      = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=False).count()
     total_filtered = qs.count()
 
     paginator   = Paginator(qs, per_page)
@@ -1397,6 +1189,7 @@ def management_reports(request):
             'ticket_key':         t.ticket_key,
             'parent_key':         t.parent_key,
             'platform':           t.platform,
+            'package_name':       t.package_name,
             'predefined_process': t.predefined_process,
             'status':             t.status,
             'start_date':         t.start_date,
@@ -1425,22 +1218,15 @@ def management_reports(request):
 
 
 # ======================================================
-# CHART API — Data untuk grafik dashboard
+# CHART API
 # ======================================================
 from django.db.models import Avg, Count, F
-import json as json_module
 
 @login_required
 def chart_data_api(request):
-    """
-    API endpoint JSON untuk data grafik.
-    Diakses oleh semua role via AJAX.
-    """
     from main.process_groups import get_process_info
-    
     published = get_published_syncs()
 
-    # Hanya sub ticket yang punya cycle_time
     qs = RawTicket.objects.filter(
         parent_key__isnull=False,
         cycle_time__isnull=False,
@@ -1448,24 +1234,17 @@ def chart_data_api(request):
         sync_log__in=published,
     ).exclude(platform='')
 
-    # ── 1. Rata-rata CT per Platform ─────────────────────────
     ct_per_platform = (
         qs.values('platform')
           .annotate(avg_ct=Avg('cycle_time'), count=Count('id'))
           .order_by('platform')
     )
-
-    chart1 = {
-        'labels': [],
-        'data':   [],
-        'counts': [],
-    }
+    chart1 = {'labels': [], 'data': [], 'counts': []}
     for row in ct_per_platform:
         chart1['labels'].append(row['platform'])
         chart1['data'].append(round(row['avg_ct'], 2))
         chart1['counts'].append(row['count'])
 
-    # ── 2. Rata-rata CT per Platform per Tahun ───────────────
     from django.db.models.functions import ExtractYear
     ct_per_platform_year = (
         qs.annotate(year=ExtractYear('start_date'))
@@ -1474,48 +1253,32 @@ def chart_data_api(request):
           .annotate(avg_ct=Avg('cycle_time'))
           .order_by('platform', 'year')
     )
-
-    # Struktur: { platform: { year: avg_ct } }
     platform_year_map = {}
     years_set = set()
     for row in ct_per_platform_year:
-        p = row['platform']
-        y = str(row['year'])
+        p = row['platform']; y = str(row['year'])
         years_set.add(y)
-        if p not in platform_year_map:
-            platform_year_map[p] = {}
+        if p not in platform_year_map: platform_year_map[p] = {}
         platform_year_map[p][y] = round(row['avg_ct'], 2)
 
     years_sorted = sorted(years_set)
     platforms    = sorted(platform_year_map.keys())
-
     COLORS = [
-        '#2563eb','#16a34a','#dc2626','#d97706',
-        '#7c3aed','#0891b2','#be185d','#059669',
-        '#ea580c','#4338ca','#0d9488','#b45309',
-        '#6d28d9',
+        '#2563eb','#16a34a','#dc2626','#d97706','#7c3aed','#0891b2',
+        '#be185d','#059669','#ea580c','#4338ca','#0d9488','#b45309','#6d28d9',
     ]
-
     chart2_datasets = []
     for i, platform in enumerate(platforms):
-        data_points = []
-        for y in years_sorted:
-            data_points.append(platform_year_map[platform].get(y, None))
         chart2_datasets.append({
             'label':           platform,
-            'data':            data_points,
+            'data':            [platform_year_map[platform].get(y) for y in years_sorted],
             'borderColor':     COLORS[i % len(COLORS)],
             'backgroundColor': COLORS[i % len(COLORS)] + '33',
             'tension':         0.3,
             'fill':            False,
         })
+    chart2 = {'labels': years_sorted, 'datasets': chart2_datasets}
 
-    chart2 = {
-        'labels':   years_sorted,
-        'datasets': chart2_datasets,
-    }
-
-    # ── 3. Rata-rata CT per Process Area per Platform ────────
     ct_per_process_platform = (
         qs.filter(predefined_process__isnull=False)
           .exclude(predefined_process='')
@@ -1523,62 +1286,33 @@ def chart_data_api(request):
           .annotate(avg_ct=Avg('cycle_time'))
           .order_by('platform', 'predefined_process')
     )
-
-    # Struktur: { platform: { process: avg_ct } }
     process_platform_map = {}
-    process_set = set()
     for row in ct_per_process_platform:
-        p   = row['platform']
-        pr  = row['predefined_process']
-        process_set.add(pr)
-        if p not in process_platform_map:
-            process_platform_map[p] = {}
+        p = row['platform']; pr = row['predefined_process']
+        if p not in process_platform_map: process_platform_map[p] = {}
         process_platform_map[p][pr] = round(row['avg_ct'], 2)
 
-    chart3 = {
-        'platforms':  sorted(process_platform_map.keys()),
-        'data':       process_platform_map,
-    }
+    chart3 = {'platforms': sorted(process_platform_map.keys()), 'data': process_platform_map}
 
-    # ── 4. Data untuk estimasi CT (semua kombinasi process+platform) ──
     estimasi_data = {}
     for row in ct_per_process_platform:
-        p  = row['platform']
-        pr = row['predefined_process']
-        if p not in estimasi_data:
-            estimasi_data[p] = {}
+        p = row['platform']; pr = row['predefined_process']
+        if p not in estimasi_data: estimasi_data[p] = {}
         estimasi_data[p][pr] = round(row['avg_ct'], 2)
 
-    # Daftar semua process unik
     all_processes = sorted(list(
-        RawTicket.objects.filter(
-            predefined_process__isnull=False
-        ).exclude(predefined_process='')
-         .values_list('predefined_process', flat=True)
-         .distinct()
+        RawTicket.objects.filter(predefined_process__isnull=False)
+        .exclude(predefined_process='')
+        .values_list('predefined_process', flat=True).distinct()
     ))
-
-    # Daftar semua platform unik
     all_platforms = sorted(list(
-        RawTicket.objects.filter(
-            platform__isnull=False
-        ).exclude(platform='')
-         .values_list('platform', flat=True)
-         .distinct()
+        RawTicket.objects.filter(platform__isnull=False)
+        .exclude(platform='')
+        .values_list('platform', flat=True).distinct()
     ))
+    chart4 = {'estimasi_data': estimasi_data, 'all_processes': all_processes, 'all_platforms': all_platforms}
 
-    chart4 = {
-        'estimasi_data': estimasi_data,
-        'all_processes': all_processes,
-        'all_platforms': all_platforms,
-    }
-
-    return JsonResponse({
-        'chart1': chart1,
-        'chart2': chart2,
-        'chart3': chart3,
-        'chart4': chart4,
-    })
+    return JsonResponse({'chart1': chart1, 'chart2': chart2, 'chart3': chart3, 'chart4': chart4})
 
 
 # ======================================================
@@ -1586,12 +1320,9 @@ def chart_data_api(request):
 # ======================================================
 @login_required
 def ct_analysis_dashboard(request):
-    """Halaman analisis cycle time dengan pivot table dan grafik."""
     from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
-    
     published = get_published_syncs()
 
-    # Ambil semua nilai unik untuk filter
     months_qs = RawTicket.objects.filter(
         parent_key__isnull=False,
         start_date__isnull=False,
@@ -1599,18 +1330,12 @@ def ct_analysis_dashboard(request):
         sync_log__in=published,
     ).dates('start_date', 'month')
 
-    all_months       = sorted(set(f"{d.year}-{str(d.month).zfill(2)}" for d in months_qs))
-    all_platforms    = sorted(set(PACKAGE_PLATFORM.values()))
-    all_stages       = sorted(set(v[0] for v in PROCESS_GROUP.values()))
-    all_areas        = sorted(set(v[1] for v in PROCESS_GROUP.values()))
-    all_processes    = sorted(set(PROCESS_GROUP.keys()))
-
     context = {
-        'all_months':   all_months,
-        'all_platforms': all_platforms,
-        'all_stages':   all_stages,
-        'all_areas':    all_areas,
-        'all_processes': all_processes,
+        'all_months':    sorted(set(f"{d.year}-{str(d.month).zfill(2)}" for d in months_qs)),
+        'all_platforms': sorted(set(PACKAGE_PLATFORM.values())),
+        'all_stages':    sorted(set(v[0] for v in PROCESS_GROUP.values())),
+        'all_areas':     sorted(set(v[1] for v in PROCESS_GROUP.values())),
+        'all_processes': sorted(set(PROCESS_GROUP.keys())),
     }
     return render(request, 'main/partials/ct_analysis.html', context)
 
@@ -1619,7 +1344,6 @@ def ct_analysis_dashboard(request):
 def ct_analysis_data(request):
     from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
     from collections import defaultdict
-    
     published = get_published_syncs()
 
     f_year      = request.GET.get('year', '').strip()
@@ -1629,8 +1353,8 @@ def ct_analysis_data(request):
     f_processes = request.GET.getlist('process')
 
     qs = RawTicket.objects.filter(
-        parent_key__isnull=False, 
-        cycle_time__isnull=False, 
+        parent_key__isnull=False,
+        cycle_time__isnull=False,
         start_date__isnull=False,
         sync_log__in=published,
     ).exclude(predefined_process__isnull=True).exclude(predefined_process='') \
@@ -1646,13 +1370,14 @@ def ct_analysis_data(request):
     if f_processes:
         qs = qs.filter(predefined_process__in=f_processes)
 
-    rows = qs.values('platform', 'predefined_process', 'cycle_time', 'start_date')
+    rows          = qs.values('platform', 'predefined_process', 'cycle_time', 'start_date')
+    _VALID_GROUPS = set(PACKAGE_PLATFORM.values())
     enriched = []
     for r in rows:
         proc        = r['predefined_process']
         plat        = r['platform']
         stage, area = PROCESS_GROUP.get(proc, ('Other', 'Other'))
-        pg          = PACKAGE_PLATFORM.get(plat, 'Other')
+        pg          = plat if plat in _VALID_GROUPS else 'Other'
         if f_platforms and pg    not in f_platforms: continue
         if f_stages    and stage not in f_stages:    continue
         if f_areas     and area  not in f_areas:     continue
@@ -1660,7 +1385,7 @@ def ct_analysis_data(request):
         enriched.append({
             'pg': pg, 'proc': proc, 'stage': stage, 'area': area,
             'ct': float(r['cycle_time']),
-            'year': str(sd.year),
+            'year':  str(sd.year),
             'month': f"{sd.year}-{str(sd.month).zfill(2)}",
         })
 
@@ -1680,11 +1405,9 @@ def ct_analysis_data(request):
         })
 
     if force_monthly:
-        # Pilih 1 tahun → tampilkan per bulan
         col_keys = sorted(set(r['month'] for r in enriched))
         col_mode = {ck: 'monthly' for ck in col_keys}
     else:
-        # All Years → selalu tampilkan per tahun
         col_keys = sorted(set(r['year'] for r in enriched))
         col_mode = {ck: 'yearly' for ck in col_keys}
 
@@ -1702,8 +1425,7 @@ def ct_analysis_data(request):
         for ck in col_keys:
             vals = col_data.get(ck, [])
             if vals:
-                apc[ck] = round(sum(vals)/len(vals), 1)
-                av.extend(vals)
+                apc[ck] = round(sum(vals)/len(vals), 1); av.extend(vals)
         apc['grand_total'] = round(sum(av)/len(av), 1) if av else None
         pivot1[pg][stage][area][proc] = apc
 
@@ -1736,21 +1458,25 @@ def ct_analysis_data(request):
 
     datasets = []
     for area in sorted(chart_raw.keys()):
-        pts = [round(sum(chart_raw[area].get(ck,[]))/max(len(chart_raw[area].get(ck,[])),1),1)
-               if chart_raw[area].get(ck) else 0 for ck in col_keys]
+        pts = [
+            round(sum(chart_raw[area].get(ck,[]))/max(len(chart_raw[area].get(ck,[])),1), 1)
+            if chart_raw[area].get(ck) else 0
+            for ck in col_keys
+        ]
         nz = [x for x in pts if x]
-        pts.append(round(sum(nz)/len(nz),1) if nz else 0)
+        pts.append(round(sum(nz)/len(nz), 1) if nz else 0)
         datasets.append({
             'label': area, 'data': pts,
-            'backgroundColor': AREA_COLORS.get(area,'#9ca3af')+'cc',
-            'borderColor': AREA_COLORS.get(area,'#9ca3af'), 'borderWidth': 1,
+            'backgroundColor': AREA_COLORS.get(area, '#9ca3af') + 'cc',
+            'borderColor':     AREA_COLORS.get(area, '#9ca3af'),
+            'borderWidth': 1,
         })
 
     return JsonResponse({
         'col_keys': col_keys, 'col_mode': col_mode, 'months': col_keys,
         'use_yearly': not force_monthly,
         'platform_groups': pgs_in_data, 'all_years': all_years_db,
-        'all_areas': sorted(pivot2.keys()),
+        'all_areas':    sorted(pivot2.keys()),
         'all_processes': sorted(set(p for ad in pivot2.values() for p in ad.keys())),
         'pivot1': pivot1, 'pivot2': pivot2,
         'chart': {'labels': col_keys + ['Grand Total'], 'datasets': datasets},

@@ -117,19 +117,34 @@ def get_process_info(predefined_process):
 
 def enrich_ticket(ticket_dict):
     """
-    Tambahkan platform, process_stage, dan process_area ke dict ticket.
+    Tambahkan platform_group, process_stage, dan process_area ke dict ticket.
     Gunakan ini di views.py saat menyiapkan data untuk template.
 
     Kolom yang ditambahkan:
-        - platform       : SOT / TO / SOP / QFP / QFN / BGA / Other
+        - platform_group : SOT / TO / SOP / QFP / QFN / BGA / Other
         - process_stage  : Pre Assembly / Assembly / Other
         - process_area   : Die Attach / Wire Bond / Testing / dll
+
+    Strategi resolusi platform_group (berurutan, pakai yang pertama berhasil):
+        1. package_name → lookup PACKAGE_PLATFORM (nama package asli, e.g. "SOT-23")
+        2. platform     → langsung pakai jika sudah berupa group value yang valid
+                          (e.g. "SOT", "BGA" — nilai yang disimpan saat sync ke DB)
+        3. platform     → lookup PACKAGE_PLATFORM sebagai fallback terakhir
+        4. Default "Other"
+
+    Latar belakang bug:
+        RawTicket.platform menyimpan hasil grouping ("SOT", "BGA", dst), BUKAN
+        nama package asli ("SOT-23", "BGA-144"). Karena PACKAGE_PLATFORM dikunci
+        berdasarkan nama package asli, `get_platform("SOT")` menghasilkan "Other".
+        Fix: utamakan package_name untuk lookup; gunakan platform langsung jika
+        sudah berupa group value yang valid.
 
     Contoh pemakaian di views.py:
         for t in page_obj.object_list:
             item = {
                 'ticket_key':         t.ticket_key,
-                'platform':           t.platform,        # nama package asli
+                'platform':           t.platform,      # group value dari DB: "SOT"
+                'package_name':       t.package_name,  # nama asli: "SOT-23"
                 'predefined_process': t.predefined_process,
                 ...
             }
@@ -137,17 +152,32 @@ def enrich_ticket(ticket_dict):
             data.append(item)
 
     Contoh pemakaian di template:
-        {{ item.platform }}        -> SOT-23  (nama package asli)
-        {{ item.platform_group }}  -> SOT     (hasil grouping)
+        {{ item.platform }}        -> SOT      (group value dari DB)
+        {{ item.platform_group }}  -> SOT      (hasil enrich, sama)
         {{ item.process_stage }}   -> Assembly
         {{ item.process_area }}    -> Die Attach
     """
-    # Package → Platform group
-    package = ticket_dict.get('platform', '')
-    ticket_dict['platform_group'] = get_platform(package)
+    # ── Semua group values yang valid ────────────────────────────────────────
+    _VALID_GROUPS = set(PACKAGE_PLATFORM.values())  # {'SOT','TO','SOP','QFP','QFN','BGA','Other'}
 
-    # Predefined Process → Stage & Area
-    proc = ticket_dict.get('predefined_process', '')
+    # ── Package → Platform group ─────────────────────────────────────────────
+    # Prioritas 1: package_name (nama package asli → lookup dict)
+    package_name = ticket_dict.get('package_name') or ''
+    if package_name in PACKAGE_PLATFORM:
+        platform_group = PACKAGE_PLATFORM[package_name]
+    else:
+        platform = ticket_dict.get('platform') or ''
+        if platform in _VALID_GROUPS:
+            # Prioritas 2: platform sudah berupa group value yang valid (hasil sync)
+            platform_group = platform
+        else:
+            # Prioritas 3: coba platform sebagai nama package (legacy / edge case)
+            platform_group = PACKAGE_PLATFORM.get(platform, 'Other')
+
+    ticket_dict['platform_group'] = platform_group
+
+    # ── Predefined Process → Stage & Area ────────────────────────────────────
+    proc = ticket_dict.get('predefined_process') or ''
     stage, area = get_process_info(proc)
     ticket_dict['process_stage'] = stage
     ticket_dict['process_area']  = area
