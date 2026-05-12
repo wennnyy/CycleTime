@@ -1,0 +1,1115 @@
+{% extends 'base_admin.html' %}
+{% block content %}
+
+{% if last_sync %}
+<div class="text-right text-xs text-gray-500 bg-white px-3 py-2 rounded shadow-sm border mb-4">
+    <p>Sync terakhir: <span class="font-medium">{{ last_sync.started_at|date:"d M Y, H:i" }}</span></p>
+    <p>Status:
+        <span class="font-semibold {% if last_sync.status == 'success' %}text-green-600{% elif last_sync.status == 'failed' %}text-red-500{% else %}text-yellow-500{% endif %}">
+            {{ last_sync.status|capfirst }}
+        </span>
+        &middot; {{ last_sync.total_processed }} tiket
+    </p>
+</div>
+{% endif %}
+
+<!-- ── Charts Bar + Doughnut + Line ───────────────────── -->
+<!-- ══════════════════════════════════════════════════════
+     CYCLE TIME ANALYSIS DASHBOARD
+     Layout: pivot kiri | filter+estimasi kanan
+     ══════════════════════════════════════════════════════ -->
+
+
+<style>
+/* Pivot table shared styles */
+.pvth { background:#f3f4f6; padding:5px 9px; border:1px solid #e5e7eb; font-weight:600; white-space:nowrap; font-size:11px; text-align:center; position:sticky; top:0; z-index:2; }
+.pvth.lh { text-align:left; z-index:3; }
+.pvtd { padding:3px 9px; border:1px solid #f0f0f0; text-align:center; white-space:nowrap; font-size:11px; }
+.pvtl { padding:3px 9px; border:1px solid #f0f0f0; text-align:left; white-space:nowrap; font-size:11px; }
+.pvtd.val  { color:#1d4ed8; }
+.pvtd.emp  { color:#d1d5db; }
+.pvtd.grd  { background:#eff6ff; font-weight:600; color:#1e40af; }
+.pvtr-tot td { background:#f8fafc; font-size:10.5px; color:#6b7280; font-style:italic; }
+.pvtr-tot td.val, .pvtr-tot td.grd { color:#0369a1; font-weight:700; font-style:normal; }
+.pg-sticky { background:#f0fdf4; font-weight:700; position:sticky; left:0; z-index:1; }
+.ar-sticky { background:#eff6ff; font-weight:700; position:sticky; left:0; z-index:1; }
+</style>
+
+
+<!-- ═══════════════════════════════════════════════════════
+     CYCLE TIME ANALYSIS DASHBOARD
+     Layout persis seperti referensi:
+     - Judul tengah | Legend platform kanan atas
+     - Pivot1 (kiri ~75%) | Filter panel (kanan ~25%)
+     - Pivot2 (kiri 50%) | Chart (kanan 50%)
+     ═══════════════════════════════════════════════════════ -->
+
+<style>
+#ctDash *{box-sizing:border-box}
+#ctDash{width:100%;max-width:calc(100vw - 310px);margin-top:2rem;font-size:12px;overflow:hidden}
+
+/* Title row */
+.ct-title-row{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:4px}
+.ct-title-row h3{font-size:24px;font-weight:700;color:#111;text-align:center;flex:1}
+.ct-legend{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:11px;background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:4px 8px;max-width:260px}
+.ct-legend-lbl{font-weight:600;color:#374151;margin-right:2px}
+.ct-leg-item{display:flex;align-items:center;gap:3px;color:#374151}
+.ct-leg-dot{width:11px;height:11px;border-radius:2px;flex-shrink:0}
+
+/* Main layout: kiri (pivot1) | kanan (filter) */
+.ct-main-row{display:flex;gap:6px;align-items:flex-start;margin-bottom:6px}
+.ct-pivot1-wrap{flex:1;min-width:0;max-width:100%;background:#fff;border:1px solid #d1d5db;border-radius:4px;overflow:hidden}
+.ct-pivot1-title{font-size:13px;font-weight:600;padding:6px 10px;border-bottom:1px solid #e5e7eb;background:#fafafa}
+.ct-pivot1-scroll{overflow:scroll;overflow-y:auto;max-height:360px;width:100%}
+
+/* Filter panel kanan */
+.ct-filter-panel{width:160px;flex-shrink:0;background:#fff;border:1px solid #d1d5db;border-radius:4px;padding:8px;font-size:11px}
+.ct-filter-panel .fp-row{margin-bottom:7px}
+.ct-filter-panel .fp-row label{display:block;color:#6b7280;margin-bottom:2px;font-size:11px}
+.ct-filter-panel select{width:100%;border:1px solid #d1d5db;border-radius:3px;padding:3px 4px;font-size:11px;background:#fff}
+.ct-filter-panel .fp-hint{font-size:10px;color:#9ca3af;margin-top:1px}
+.ct-fp-btns{display:flex;gap:4px;margin-top:4px}
+.ct-fp-btns button{flex:1;padding:4px 0;border-radius:3px;font-size:11px;cursor:pointer;border:1px solid transparent}
+.ct-fp-apply{background:#15803d;color:#fff}
+.ct-fp-apply:hover{background:#166534}
+.ct-fp-reset{background:#fff;border-color:#d1d5db;color:#374151}
+.ct-fp-reset:hover{background:#f9fafb}
+
+/* Estimasi di bawah filter */
+
+
+
+.ct-est-list table{width:100%;border-collapse:collapse}
+.ct-est-list table th{background:#f3f4f6;padding:3px 5px;font-size:10px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;position:sticky;top:0;z-index:1}
+.ct-est-list table td{padding:2px 5px;border-bottom:1px solid #f9fafb;vertical-align:middle}
+.ct-est-list table tr:hover td{background:#f9fafb}
+.ct-est-list table input[type=checkbox]{cursor:pointer}
+.ct-est-list table input[type=number]{width:40px;border:1px solid #d1d5db;border-radius:3px;padding:1px 3px;font-size:10px;text-align:center}
+
+
+
+
+.ct-est-bd table{width:100%;border-collapse:collapse;font-size:10px}
+.ct-est-bd table td{padding:1px 3px;color:#374151}
+.ct-est-bd table td:last-child{text-align:right;font-weight:600;color:#15803d}
+.ct-est-bd .bd-total{font-weight:700;border-top:1px solid #bbf7d0;color:#166534}
+
+/* Bottom row: pivot2 | chart */
+.ct-bottom-row{display:flex;gap:6px;align-items:flex-start}
+.ct-pivot2-wrap{flex:1;min-width:0;max-width:50%;background:#fff;border:1px solid #d1d5db;border-radius:4px;overflow:hidden}
+.ct-pivot2-title{font-size:13px;font-weight:600;padding:6px 10px;border-bottom:1px solid #e5e7eb;background:#fafafa}
+.ct-pivot2-scroll{overflow:scroll;overflow-y:auto;max-height:280px;width:100%}
+.ct-chart-wrap{flex:1;min-width:0;max-width:50%;background:#fff;border:1px solid #d1d5db;border-radius:4px;padding:10px}
+.ct-chart-title{font-size:13px;font-weight:600;margin-bottom:6px}
+.ct-chart-inner{height:240px}
+
+/* ── Platform CT Summary (Tujuan 3) ── */
+
+/* Pivot table shared */
+.pvth{background:#f3f4f6;padding:4px 8px;border:1px solid #e5e7eb;font-weight:600;white-space:nowrap;font-size:11px;text-align:center;position:sticky;top:0;z-index:2;color:#374151}
+.pvth.lh{text-align:left;z-index:3}
+.pvtd{padding:3px 8px;border:1px solid #f0f0f0;text-align:center;white-space:nowrap;font-size:11px}
+.pvtl{padding:3px 8px;border:1px solid #f0f0f0;text-align:left;white-space:nowrap;font-size:11px}
+.pvtd.val{color:#1d4ed8}
+.pvtd.emp{color:#d1d5db}
+.pvtd.grd{background:#eff6ff;font-weight:600;color:#1e40af}
+.pvtr-tot td{background:#f8fafc;font-size:10.5px;color:#6b7280;font-style:italic}
+.pvtr-tot td.val,.pvtr-tot td.grd{color:#0369a1;font-weight:700;font-style:normal}
+.pg-sticky{background:#f0fdf4;font-weight:700;position:sticky;left:0;z-index:1}
+.ar-sticky{background:#eff6ff;font-weight:700;position:sticky;left:0;z-index:1}
+.ct-nodata{padding:28px;text-align:center;color:#9ca3af;font-size:12px}
+
+/* ── Filter dropdown redesign ── */
+.ct-filter-panel{width:180px;flex-shrink:0;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:12px;font-size:12px}
+.ct-filter-panel .fp-row{margin-bottom:10px}
+.ct-filter-panel .fp-row label{display:block;color:#6b7280;font-size:11px;font-weight:500;margin-bottom:4px}
+.ct-filter-panel select{width:100%;border:1px solid #d1d5db;border-radius:6px;padding:7px 28px 7px 10px;font-size:12px;font-weight:500;color:#111827;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center;appearance:none;-webkit-appearance:none;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.ct-filter-panel select:focus{outline:none;border-color:#15803d;box-shadow:0 0 0 2px #bbf7d0}
+.ct-fp-btns button{width:100%;padding:6px;border-radius:5px;cursor:pointer;border:1px solid #d1d5db;background:#fff;color:#374151;font-size:12px;transition:background .15s}
+.ct-fp-btns button:hover{background:#f9fafb}
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+
+
+<script>
+// ── CT Filter helpers — global ───────────────────────────
+function _fillSel(id, items, keepVal) {
+    var sel = document.getElementById(id);
+    if (!sel) return;
+    var prev = keepVal ? sel.value : '';
+    while (sel.options.length > 1) sel.remove(1);
+    (items || []).forEach(function(v) {
+        var o = document.createElement('option');
+        o.value = v; o.textContent = v; sel.appendChild(o);
+    });
+    if (prev) sel.value = prev;
+}
+
+window.ctFillFilterDropdowns = function(data) {
+    _fillSel('ct_fp_single', data.platform_groups || [], true);
+    _fillSel('ct_fa_single', data.all_areas       || [], true);
+    _fillSel('ct_fpr_single',data.all_processes   || [], true);
+};
+
+window.ctApplySingle = function() {
+    var p = new URLSearchParams();
+    var g  = function(id) { var e = document.getElementById(id); return e ? e.value : ''; };
+    var gm = function(id) { var e = document.getElementById(id); return e ? Array.from(e.selectedOptions).map(function(o){return o.value;}).filter(function(v){return v;}) : []; };
+    if (g('ct_fy'))         p.append('year',     g('ct_fy'));
+    // single-select filter panel
+    if (g('ct_fp_single'))  p.append('platform', g('ct_fp_single'));
+    if (g('ct_fs_single'))  p.append('stage',    g('ct_fs_single'));
+    if (g('ct_fa_single'))  p.append('area',     g('ct_fa_single'));
+    if (g('ct_fpr_single')) p.append('process',  g('ct_fpr_single'));
+    // multi-select filter (jika ada)
+    gm('ct_fp').forEach(function(v){p.append('platform',v);});
+    gm('ct_fs').forEach(function(v){p.append('stage',v);});
+    gm('ct_fa').forEach(function(v){p.append('area',v);});
+    gm('ct_fpr').forEach(function(v){p.append('process',v);});
+    window.ctFetch(p);
+};
+
+window.ctResetSingle = function() {
+    ['ct_fy','ct_fp_single','ct_fs_single','ct_fa_single','ct_fpr_single'].forEach(function(id) {
+        var e = document.getElementById(id); if (e) e.value = '';
+    });
+    ['ct_fm','ct_fp','ct_fs','ct_fa','ct_fpr'].forEach(function(id) {
+        var e = document.getElementById(id); if(e) Array.from(e.options).forEach(function(o){o.selected=false;});
+    });
+    window.ctFetch(new URLSearchParams());
+};
+</script>
+<div id="ctDash">
+
+    <!-- Title row: judul tengah + legend kanan -->
+    <div class="ct-title-row">
+        <div style="width:160px"></div>
+        <h3>Cycle Time Analysis Dashboard</h3>
+        <div class="ct-legend" id="ctLegend" style="width:160px">
+            <span class="ct-legend-lbl">Platform Grouped</span>
+        </div>
+    </div>
+
+    <!-- Loading -->
+    <div id="ctLoading" style="background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:32px;text-align:center;color:#9ca3af;margin-bottom:8px">
+        <svg style="width:24px;height:24px;margin:0 auto 8px;display:block;animation:spin 1s linear infinite" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle style="opacity:.25" cx="12" cy="12" r="10" stroke="#16a34a" stroke-width="4"></circle>
+            <path style="opacity:.75" fill="#16a34a" d="M4 12a8 8 0 018-8v8z"></path>
+        </svg>
+        <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+        <p>Memuat data analisis...</p>
+    </div>
+
+    <div id="ctLoaded" style="display:none">
+
+        <!-- Row 1: Pivot 1 (kiri) + Filter (kanan) -->
+        <div class="ct-main-row">
+
+            <!-- Pivot 1 -->
+            <div class="ct-pivot1-wrap">
+                <div class="ct-pivot1-title" id="ctPivot1Title">Process CT per Monthly</div>
+                <div class="ct-pivot1-scroll">
+                    <table id="ctPivot1" style="border-collapse:collapse;width:max-content;min-width:100%">
+                        <thead></thead><tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Filter panel -->
+                <div class="ct-filter-panel">
+                    <p style="font-weight:700;font-size:12px;color:#374151;margin-bottom:10px">Filter</p>
+
+                    <div class="fp-row">
+                        <label>Year</label>
+                        <select id="ct_fy" onchange="ctApplySingle()">
+                            <option value="">All Years</option>
+                            {% for y in all_years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="fp-row">
+                        <label>Platform Grouped</label>
+                        <select id="ct_fp_single" onchange="ctApplySingle()">
+                            <option value="">All Platforms</option>
+                        </select>
+                    </div>
+                    <div class="fp-row">
+                        <label>Process Stage</label>
+                        <select id="ct_fs_single" onchange="ctApplySingle()">
+                            <option value="">All Stage</option>
+                            {% for s in all_stages %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div class="fp-row">
+                        <label>Process Area</label>
+                        <select id="ct_fa_single" onchange="ctApplySingle()">
+                            <option value="">All Area</option>
+                        </select>
+                    </div>
+                    <div class="fp-row">
+                        <label>Predefined Process</label>
+                        <select id="ct_fpr_single" onchange="ctApplySingle()">
+                            <option value="">All Process</option>
+                        </select>
+                    </div>
+                    <div style="margin-top:8px">
+                        <button onclick="ctResetSingle()" style="width:100%;padding:6px;border-radius:5px;cursor:pointer;border:1px solid #d1d5db;background:#fff;color:#374151;font-size:11px">↺ Reset Filter</button>
+                    </div>
+                </div><!-- end filter -->
+
+        </div><!-- end row 1 -->
+
+        <!-- Row 2: Pivot 2 (kiri) + Chart (kanan) -->
+        <div class="ct-bottom-row">
+
+            <div class="ct-pivot2-wrap">
+                <div class="ct-pivot2-title">Process per Platform</div>
+                <div class="ct-pivot2-scroll">
+                    <table id="ctPivot2" style="border-collapse:collapse;width:max-content;min-width:100%">
+                        <thead></thead><tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="ct-chart-wrap">
+                <div class="ct-chart-title" id="ctChartTitle">Total Average Of CT</div>
+                <div class="ct-chart-inner">
+                    <canvas id="ctStackedCanvas"></canvas>
+                </div>
+            </div>
+
+        </div><!-- end row 2 -->
+
+    </div><!-- end ctLoaded -->
+
+</div><!-- end ctDash -->
+
+<style>
+#ctProposal{margin-top:16px;font-size:13px}
+.prop-card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.prop-header{background:linear-gradient(135deg,#1e3a2f 0%,#15803d 100%);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;border-bottom:none}
+.prop-header-icon{background:rgba(255,255,255,.15);border-radius:8px;padding:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.prop-header h4{font-size:15px;font-weight:700;margin:0;letter-spacing:.01em}
+.prop-header p{font-size:11px;color:#bbf7d0;margin:4px 0 0;opacity:.9}
+.prop-body{padding:20px}
+
+/* Input grid */
+.prop-inputs{display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:12px;align-items:end;margin-bottom:12px}
+.prop-field{display:flex;flex-direction:column;gap:4px}
+.prop-field label{font-size:11px;color:#6b7280;font-weight:500}
+.prop-field select,
+.prop-field input{border:1px solid #d1d5db;border-radius:5px;padding:6px 8px;font-size:12px;background:#fff;width:100%}
+.prop-field input[type=number]{width:100%}
+.prop-calc-btn{background:#15803d;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;height:36px;letter-spacing:.02em;transition:background .15s}
+.prop-calc-btn:hover{background:#166534}
+
+/* Process selection */
+.prop-process-wrap{margin-bottom:14px}
+.prop-process-wrap label{font-size:11px;color:#6b7280;font-weight:500;display:block;margin-bottom:4px}
+.prop-process-grid{display:flex;flex-wrap:wrap;gap:6px;border:1px solid #e5e7eb;border-radius:5px;padding:10px;min-height:42px;max-height:130px;overflow-y:auto}
+.prop-process-grid .ph{color:#9ca3af;font-size:12px}
+.proc-chip{display:flex;align-items:center;gap:4px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:20px;padding:3px 10px;font-size:11px;cursor:pointer;user-select:none;transition:all .15s}
+.proc-chip:hover{background:#dcfce7}
+.proc-chip.selected{background:#15803d;border-color:#15803d;color:#fff}
+.proc-chip.selected:hover{background:#166534}
+
+/* Step number di chip */
+.chip-step {
+    font-size: 9px; font-weight: 700;
+    width: 14px; height: 14px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #d1fae5; color: #065f46; flex-shrink: 0;
+}
+.proc-chip.selected .chip-step { background: rgba(255,255,255,.25); color: #fff; }
+
+/* Result section */
+.prop-result{display:none;border-top:1px solid #e5e7eb;padding-top:14px;margin-top:2px}
+.prop-result-header{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px}
+.prop-summary-box{background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #bbf7d0;border-radius:10px;padding:16px 24px;display:flex;gap:28px;flex-wrap:wrap;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.prop-summary-item{text-align:center}
+.prop-summary-item .val{font-size:26px;font-weight:700;color:#15803d;line-height:1}
+.prop-summary-item .lbl{font-size:11px;color:#6b7280;margin-top:2px}
+.prop-meta{font-size:11px;color:#6b7280;display:flex;flex-direction:column;gap:3px;justify-content:center}
+
+/* Breakdown table */
+.prop-breakdown{width:100%;border-collapse:collapse;font-size:12px}
+.prop-breakdown th{background:#f3f4f6;padding:6px 10px;border:1px solid #e5e7eb;font-weight:600;text-align:left;font-size:11px;color:#374151}
+.prop-breakdown th.num{text-align:right}
+.prop-breakdown td{padding:5px 10px;border:1px solid #f0f0f0;vertical-align:middle}
+.prop-breakdown td.num{text-align:right;color:#1d4ed8;font-weight:500}
+.prop-breakdown td.sub{color:#6b7280;font-size:11px}
+.prop-breakdown tr:nth-child(even) td{background:#fafafa}
+.prop-breakdown tr.total-row td{background:#f0fdf4;font-weight:700;color:#15803d;border-top:2px solid #bbf7d0}
+.prop-breakdown td .bar-wrap{background:#e5e7eb;border-radius:3px;height:5px;margin-top:3px;overflow:hidden}
+.prop-breakdown td .bar-fill{height:5px;border-radius:3px;background:#15803d;transition:width .4s}
+
+/* Badges */
+.prop-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+.badge-low{background:#dcfce7;color:#166534}
+.badge-med{background:#fef9c3;color:#854d0e}
+.badge-high{background:#fee2e2;color:#991b1b}
+</style>
+
+<div id="ctProposal">
+    <div class="prop-card">
+
+        <!-- Header -->
+        <div class="prop-header">
+            <div class="prop-header-icon">
+                <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                </svg>
+            </div>
+            <div>
+                <h4>CT Proposal &mdash; Cycle Time Estimation</h4>
+                <p>Estimate cycle time for new orders based on historical process data</p>
+            </div>
+        </div>
+
+        <div class="prop-body">
+
+            <!-- Input row -->
+            <div class="prop-inputs">
+                <div class="prop-field">
+                    <label>Platform</label>
+                    <select id="propPlatform" onchange="propUpdateProcess()">
+                        <option value="">Select a Platform</option>
+                    </select>
+                </div>
+                <div class="prop-field">
+                    <label>Quantity (Unit)</label>
+                    <input type="number" id="propQty" min="1" value="1000" placeholder="Jumlah Unit">
+                </div>
+                <div class="prop-field">
+                    <label>Start Date</label>
+                    <input type="date" id="propStartDate">
+                </div>
+                <button class="prop-calc-btn" onclick="propCalculate()">Calculate Estimate</button>
+            </div>
+
+            <!-- Process selection (chips) -->
+            <div class="prop-process-wrap">
+                <label>
+                    Process Required
+                    <span id="propProcCount" style="color:#15803d;font-weight:600"></span>
+                </label>
+                <div class="prop-process-grid" id="propProcGrid">
+                    <span class="ph">Choose a platform first</span>
+                </div>
+            </div>
+
+            <!-- Result -->
+            <div class="prop-result" id="propResult">
+
+                <!-- Summary boxes -->
+                <div class="prop-result-header">
+                    <div class="prop-summary-box">
+                        <div class="prop-summary-item">
+                            <div class="val" id="propTotalDays">—</div>
+                            <div class="lbl">Total CT (days)</div>
+                        </div>
+                        <div class="prop-summary-item">
+                            <div class="val" id="propWorkDays">—</div>
+                            <div class="lbl">Estimated Working Days</div>
+                        </div>
+                        <div class="prop-summary-item">
+                            <div class="val" id="propBottleneck" style="font-size:13px;color:#d97706">—</div>
+                            <div class="lbl">⚠ Bottleneck Process</div>
+                        </div>
+                        <div class="prop-summary-item">
+                            <div class="val" id="propStartDateOut" style="font-size:15px">—</div>
+                            <div class="lbl">Start Date</div>
+                        </div>
+                        <div class="prop-summary-item" style="display:flex;align-items:center;padding-top:4px">
+                            <span style="font-size:18px;color:#15803d;padding:0 8px">→</span>
+                        </div>
+                        <div class="prop-summary-item">
+                            <div class="val" id="propDueDate" style="font-size:15px">—</div>
+                            <div class="lbl">Due Date</div>
+                        </div>
+                    </div>
+                    <div class="prop-meta">
+                        <div>Platform: <strong id="propMetaPlatform">—</strong></div>
+                        <div>Quantity: <strong id="propMetaQty">—</strong></div>
+                        <div>Process selected: <strong id="propMetaProc">—</strong></div>
+                        <div>Σ CT/unit: <strong id="propSumCT">—</strong> days/unit</div>
+                        <div style="font-size:10px;font-family:monospace;color:#6b7280" id="propFormula"></div>
+                    </div>
+                </div>
+
+                <!-- Breakdown table -->
+                <table class="prop-breakdown">
+                    <thead>
+                        <tr>
+                            <th style="min-width:30px">#</th>
+                            <th style="min-width:140px">Predefined Process</th>
+                            <th>Process Area</th>
+                            <th class="num">Avg CT / unit (days)</th>
+                            <th class="num">CT × Qty unit (days)</th>
+                            <th style="min-width:100px">Proportion of Σ CT</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="propBreakdownBody"></tbody>
+                </table>
+
+            </div><!-- end propResult -->
+
+        </div><!-- end prop-body -->
+    </div><!-- end prop-card -->
+</div><!-- end ctProposal -->
+
+
+<script>
+(function(){
+    // _propData: { pg: { proc: { median_ct, median_qty, ct_per_unit, n, area } } }
+    window._propData    = {};
+    window._propAreaMap = {};
+ 
+    const FLOW_ORDER = [
+        'Wafer Incoming Inspection','Wafer Backgrinding','Wafer Mounting',
+        'Wafer Sawing','Die Inspection',
+        'Die Attach','Die Attach Cure',
+        'Wire Bond','Wire Bond Inspection',
+        'Mold','Mold Cure',
+        'Dejunk & Trim','Trim & Form','Singulation',
+        'Ball Mount (BGA)','Ball Attach Reflow','Flux Cleaning',
+        'Plating','Plating Inspection','Lead Finish',
+        'Marking','Marking Inspection',
+        'X-Ray Inspection','Visual Inspection','Automated Optical Inspection (AOI)',
+        'Electrical Test (ET)','Final Test','Burn-In Test',
+        'High Temperature Storage (HTS)','Temperature Cycling Test',
+        'Moisture Sensitivity Test','Board Level Reliability Test',
+        'ESD Test','Solderability Test','Package Integrity Test','Leak Test',
+        'Tape & Reel','Tray Packing','Tube Packing','Label & Barcode',
+        'Outgoing Quality Control (OQC)','Dry Pack','Humidity Indicator Check',
+        'Documentation Review','Shipment Preparation',
+    ];
+ 
+    document.addEventListener('ct:dataLoaded', function(e) {
+        if (!e.detail) return;
+ 
+        const proposalData = e.detail.pivot_proposal || null;
+        const pivot2       = e.detail.pivot2 || {};
+ 
+        window._propData    = {};
+        window._propAreaMap = {};
+ 
+        if (proposalData && Object.keys(proposalData).length > 0) {
+            // Gunakan pivot_proposal dari backend (data lengkap dengan median_qty)
+            Object.entries(proposalData).forEach(([pg, procs]) => {
+                window._propData[pg] = {};
+                Object.entries(procs).forEach(([proc, info]) => {
+                    window._propData[pg][proc] = info;
+                    window._propAreaMap[proc]   = info.area || '—';
+                });
+            });
+        } else {
+            // Fallback ke pivot2 jika pivot_proposal tidak ada
+            Object.entries(pivot2).forEach(([area, procs]) => {
+                Object.entries(procs).forEach(([proc, pgData]) => {
+                    window._propAreaMap[proc] = area;
+                    Object.entries(pgData).forEach(([key, val]) => {
+                        if (key==='grand_total'||key==='grand_count'||key.endsWith('__count')) return;
+                        if (!window._propData[key]) window._propData[key] = {};
+                        window._propData[key][proc] = {
+                            median_ct:   val,
+                            median_qty:  null,
+                            ct_per_unit: null,
+                            n:           pgData[key+'__count'] || 0,
+                            area:        area,
+                        };
+                    });
+                });
+            });
+        }
+ 
+        const sel = document.getElementById('propPlatform');
+        if (sel) {
+            const prev = sel.value;
+            while (sel.options.length > 1) sel.remove(1);
+            Object.keys(window._propData).sort().forEach(pg => {
+                const o = document.createElement('option');
+                o.value = pg; o.textContent = pg;
+                sel.appendChild(o);
+            });
+            if (prev && window._propData[prev]) {
+                sel.value = prev;
+                propUpdateProcess();
+            }
+        }
+ 
+        const sd = document.getElementById('propStartDate');
+        if (sd && !sd.value) sd.value = new Date().toISOString().split('T')[0];
+    });
+ 
+    window.propUpdateProcess = function() {
+        const pg   = document.getElementById('propPlatform').value;
+        const grid = document.getElementById('propProcGrid');
+        document.getElementById('propResult').style.display = 'none';
+        updateProcCount();
+ 
+        if (!pg || !window._propData[pg]) {
+            grid.innerHTML = '<span class="ph">Choose a platform first</span>';
+            return;
+        }
+ 
+        const map            = window._propData[pg];
+        const availableProcs = Object.keys(map);
+ 
+        const sorted = availableProcs.slice().sort((a, b) => {
+            const ia = FLOW_ORDER.indexOf(a), ib = FLOW_ORDER.indexOf(b);
+            if (ia !== -1 && ib !== -1) return ia - ib;
+            if (ia !== -1) return -1;
+            if (ib !== -1) return  1;
+            return a.localeCompare(b);
+        });
+ 
+        grid.innerHTML = '';
+        sorted.forEach((proc, idx) => {
+            const info = map[proc];
+            const step = idx + 1;
+            const chip = document.createElement('span');
+            chip.className         = 'proc-chip';
+            chip.dataset.proc      = proc;
+            chip.dataset.step      = step;
+            chip.dataset.medianCt  = info.median_ct  != null ? info.median_ct  : '';
+            chip.dataset.medianQty = info.median_qty != null ? info.median_qty : '';
+            chip.dataset.ctPerUnit = info.ct_per_unit != null ? info.ct_per_unit : '';
+            chip.dataset.area      = info.area || window._propAreaMap[proc] || '—';
+            chip.dataset.n         = info.n || 0;
+            chip.innerHTML = `<span class="chip-step">${step}</span>${proc}`;
+            chip.onclick = function() {
+                this.classList.toggle('selected');
+                updateProcCount();
+            };
+            grid.appendChild(chip);
+        });
+    };
+ 
+    function updateProcCount() {
+        const selected = document.querySelectorAll('#propProcGrid .proc-chip.selected');
+        const span     = document.getElementById('propProcCount');
+        span.textContent = selected.length ? ` (${selected.length} selected)` : '';
+    }
+ 
+    function fmtDate(dt) {
+        const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return `${days[dt.getDay()]}, ${dt.getDate()} ${mons[dt.getMonth()]} ${dt.getFullYear()}`;
+    }
+ 
+    window.propCalculate = function() {
+        const pg        = document.getElementById('propPlatform').value;
+        const qty       = parseInt(document.getElementById('propQty').value) || 1;
+        const startDate = document.getElementById('propStartDate').value;
+        const selected  = document.querySelectorAll('#propProcGrid .proc-chip.selected');
+ 
+        if (!pg)              { alert('Choose a platform first'); return; }
+        if (!selected.length) { alert('Select at least 1 required process'); return; }
+        if (!startDate)       { alert('Fill in Start Date first'); return; }
+ 
+        if (!window._propData[pg] || !Object.keys(window._propData[pg]).length) {
+            alert('Historical data for platform ' + pg + ' is not available.');
+            return;
+        }
+ 
+        // ── Hitung CT per process ─────────────────────────────────────────
+        const rows  = [];
+        let totalCT = 0;
+        let maxCT   = 0;
+        let bottleneckProc = '';
+ 
+        Array.from(selected)
+            .sort((a, b) => parseInt(a.dataset.step||99) - parseInt(b.dataset.step||99))
+            .forEach(chip => {
+                const proc      = chip.dataset.proc;
+                const area      = chip.dataset.area || '—';
+                const step      = parseInt(chip.dataset.step) || 0;
+                const medianCt  = chip.dataset.medianCt  !== '' ? parseFloat(chip.dataset.medianCt)  : null;
+                const medianQty = chip.dataset.medianQty !== '' ? parseFloat(chip.dataset.medianQty) : null;
+                const ctPerUnit = chip.dataset.ctPerUnit !== '' ? parseFloat(chip.dataset.ctPerUnit) : null;
+                const n         = parseInt(chip.dataset.n) || 0;
+ 
+                let ct_process, has_qty_scaling;
+ 
+                if (ctPerUnit != null && ctPerUnit > 0) {
+                    // Scaling proporsional: CT = (median_ct / median_qty) x qty_baru
+                    ct_process      = ctPerUnit * qty;
+                    has_qty_scaling = true;
+                } else {
+                    // Fallback: CT flat per order (tidak ada data qty di historis)
+                    ct_process      = medianCt != null ? medianCt : 0;
+                    has_qty_scaling = false;
+                }
+ 
+                totalCT += ct_process;
+                if (ct_process > maxCT) {
+                    maxCT          = ct_process;
+                    bottleneckProc = proc;
+                }
+ 
+                rows.push({ proc, area, step, n, medianCt, medianQty, ctPerUnit, ct_process, has_qty_scaling });
+            });
+ 
+        const workDays     = Math.ceil(totalCT);
+        const bottleneckCT = rows.find(r => r.proc === bottleneckProc)?.ct_process || 0;
+ 
+        const startDt = new Date(startDate);
+        const dueDt   = new Date(startDate);
+        dueDt.setDate(dueDt.getDate() + workDays);
+ 
+        // ── Summary ───────────────────────────────────────────────────────
+        document.getElementById('propTotalDays').textContent    = totalCT.toFixed(1);
+        document.getElementById('propWorkDays').textContent     = workDays;
+        document.getElementById('propBottleneck').textContent   = bottleneckProc? `${bottleneckProc} (${bottleneckCT.toFixed(2)} days)`: '—';
+        document.getElementById('propStartDateOut').textContent = fmtDate(startDt);
+        document.getElementById('propDueDate').textContent      = fmtDate(dueDt);
+        document.getElementById('propMetaPlatform').textContent = pg;
+        document.getElementById('propMetaQty').textContent      = qty.toLocaleString('id') + ' unit';
+        document.getElementById('propMetaProc').textContent     = rows.length + ' process';
+ 
+        const allHaveQty    = rows.every(r => r.has_qty_scaling);
+        const sumCtPerUnit  = rows.reduce((s, r) => s + (r.ctPerUnit || 0), 0);
+        if (allHaveQty && qty > 0) {
+            document.getElementById('propSumCT').textContent   = sumCtPerUnit.toFixed(6);
+            document.getElementById('propFormula').textContent =
+                `Σ(${sumCtPerUnit.toFixed(6)} days/unit) × ${qty} unit = ${totalCT.toFixed(2)} days`;
+        } else {
+            document.getElementById('propSumCT').textContent   = totalCT.toFixed(4);
+            document.getElementById('propFormula').textContent =
+                `Total CT = ${totalCT.toFixed(2)} days (${workDays} days)`;
+        }
+ 
+        // ── Breakdown table ───────────────────────────────────────────────
+        const tbody     = document.getElementById('propBreakdownBody');
+        const maxForBar = Math.max(...rows.map(r => r.ct_process), 0.001);
+        let tbHtml      = '';
+ 
+        rows.forEach(r => {
+            const pct      = totalCT > 0 ? Math.round(r.ct_process / totalCT * 100) : 0;
+            const barW     = Math.round(r.ct_process / maxForBar * 100);
+            const isBottle = r.proc === bottleneckProc;
+ 
+            const ctColDisplay = r.ctPerUnit != null
+                ? r.ctPerUnit.toFixed(6)
+                : (r.medianCt != null ? r.medianCt.toFixed(2) + ' (flat)' : '—');
+ 
+            const tooltip = r.has_qty_scaling
+                ? `Median historis: ${r.medianCt?.toFixed(2)} hari ÷ ${r.medianQty?.toFixed(0)} unit = ${r.ctPerUnit?.toFixed(6)} hari/unit\n× ${qty} unit = ${r.ct_process.toFixed(2)} hari  |  ${r.n} sample`
+                : `CT flat historis: ${r.medianCt?.toFixed(2)} hari  |  ${r.n} sample  |  Quantity data is not available`;
+ 
+            tbHtml += `
+            <tr${isBottle ? ' style="background:#fffbeb"' : ''} title="${tooltip.replace(/"/g,'&quot;')}">
+                <td style="text-align:center;color:#6b7280;font-size:11px">${r.step}</td>
+                <td>
+                    <strong>${r.proc}</strong>
+                    ${isBottle ? ' <span style="font-size:10px;color:#d97706">▲</span>' : ''}
+                    ${!r.has_qty_scaling ? '<br><span style="font-size:9px;color:#9ca3af">CT flat — quantity not found in history</span>' : ''}
+                </td>
+                <td style="font-size:11px;color:#6b7280">${r.area}</td>
+                <td class="num">${ctColDisplay}</td>
+                <td class="num">${r.ct_process.toFixed(2)}</td>
+                <td>
+                    <div style="font-size:10px;color:#6b7280;margin-bottom:2px">${pct}%</div>
+                    <div class="bar-wrap">
+                        <div class="bar-fill" style="width:${barW}%${isBottle ? ';background:#d97706' : ''}"></div>
+                    </div>
+                </td>
+                <td style="font-size:11px;color:${isBottle ? '#d97706' : '#9ca3af'}">
+                    ${isBottle ? '⚠ Bottleneck' : '—'}
+                </td>
+            </tr>`;
+        });
+ 
+        // Total row
+        tbHtml += `
+        <tr class="total-row">
+            <td></td>
+            <td colspan="2">
+                <strong>TOTAL — ${qty.toLocaleString('id')} unit</strong>
+                ${allHaveQty
+                    ? `<span style="font-size:10px;font-weight:400;font-family:monospace;margin-left:6px">${sumCtPerUnit.toFixed(6)} days/unit × ${qty} = ${totalCT.toFixed(2)} days</span>`
+                    : `<span style="font-size:10px;margin-left:6px;color:#9ca3af">CT historis flat</span>`
+                }
+            </td>
+            <td class="num" style="font-size:10px;color:#6b7280">
+                ${qty > 0 ? (totalCT / qty).toFixed(4) + ' days/unit' : ''}
+            </td>
+            <td class="num">${totalCT.toFixed(2)} <span style="font-size:10px;color:#6b7280">days</span></td>
+            <td colspan="2">
+                → <strong>${workDays} work days</strong>
+                | Due: <strong style="color:#15803d">${fmtDate(dueDt)}</strong>
+            </td>
+        </tr>`;
+ 
+        tbody.innerHTML = tbHtml;
+        document.getElementById('propResult').style.display = 'block';
+        document.getElementById('propResult').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
+ 
+})();
+</script>
+
+
+<script>
+(function(){
+const PG_C={'BGA':'#2563eb','SOT':'#9ca3af','QFN':'#d97706','QFP':'#111827','SOP':'#dc2626','TO':'#374151','Other':'#6b7280'};
+const AR_C={'Die Attach':'#2563eb','Wire Bond':'#16a34a','Molding':'#dc2626','Trim & Form':'#d97706','Marking':'#7c3aed','Plating':'#0891b2','Ball Mount':'#be185d','Quality Control':'#059669','Testing':'#ea580c','Reliability Test':'#4338ca','Packing':'#0d9488','Shipment':'#b45309','Wafer Preparation':'#6d28d9','Other':'#9ca3af'};
+let _ch=null,_em={};
+
+function gsel(id){return Array.from(document.getElementById(id).selectedOptions).map(o=>o.value).filter(v=>v);}
+
+window.ctApply=function(){
+    const p=new URLSearchParams();
+    // Ambil year dari single filter panel
+    const fy=document.getElementById('ct_fy'); if(fy&&fy.value) p.append('year',fy.value);
+    gsel('ct_fm').forEach(v=>p.append('month',v));
+    gsel('ct_fp').forEach(v=>p.append('platform',v));
+    gsel('ct_fs').forEach(v=>p.append('stage',v));
+    gsel('ct_fa').forEach(v=>p.append('area',v));
+    gsel('ct_fpr').forEach(v=>p.append('process',v));
+    // Juga ambil dari single-select jika ada
+    const fps=document.getElementById('ct_fp_single'); if(fps&&fps.value) p.append('platform',fps.value);
+    const fss=document.getElementById('ct_fs_single'); if(fss&&fss.value) p.append('stage',fss.value);
+    const fas=document.getElementById('ct_fa_single'); if(fas&&fas.value) p.append('area',fas.value);
+    const fprs=document.getElementById('ct_fpr_single'); if(fprs&&fprs.value) p.append('process',fprs.value);
+    window.ctFetch(p);
+};
+
+window.ctReset=function(){
+    ['ct_fm','ct_fp','ct_fs','ct_fa','ct_fpr'].forEach(id=>{
+        const el=document.getElementById(id); if(el) Array.from(el.options).forEach(o=>o.selected=false);
+    });
+    // Reset juga single-select panel
+    ['ct_fy','ct_fp_single','ct_fs_single','ct_fa_single','ct_fpr_single'].forEach(id=>{
+        const el=document.getElementById(id); if(el) el.value='';
+    });
+    window.ctFetch(new URLSearchParams());
+};
+
+window.ctFetch = async function ctFetch(params){
+    document.getElementById('ctLoading').style.display='';
+    document.getElementById('ctLoaded').style.display='none';
+    try{
+        const d=await(await fetch('/dashboard/ct-analysis/data/?'+params)).json();
+        console.log('ct-analysis data keys:', Object.keys(d));
+        var useYearly = d.use_yearly || false;
+        // Simpan ke window agar buildChart bisa akses
+        window._lastPivot1  = d.pivot1||{};
+        window._lastColKeys = d.col_keys||d.months||[];
+        window._lastColMode = d.col_mode||{};
+        buildLegend(d.platform_groups||[], d);
+        buildPivot1(d.pivot1||{}, d.col_keys||d.months||[], useYearly);
+        buildPivot2(d.pivot2||{}, d.platform_groups||[]);
+        buildChart(d.chart||{labels:[],datasets:[]}, useYearly);
+        buildEst(d.pivot2||{}, d.pivot_proposal||{});
+        // Update pivot/chart titles
+        var t1 = document.getElementById('ctPivot1Title');
+        if (t1) t1.textContent = useYearly ? 'Process CT per Year' : 'Process CT per Monthly';
+        var tc = document.getElementById('ctChartTitle');
+        if (tc) tc.textContent = 'Average Process CT per Platform';
+        document.getElementById('ctLoading').style.display='none';
+        document.getElementById('ctLoaded').style.display='';
+    }catch(e){
+        console.error('ct-analysis error:', e);
+        document.getElementById('ctLoading').innerHTML='<p style="color:#f87171;padding:20px;text-align:center">Gagal memuat data analisis. Cek console browser untuk detail error.</p>';
+    }
+}
+
+function buildLegend(pgs, fullData){
+    if (typeof window.ctFillFilterDropdowns === 'function') {
+        window.ctFillFilterDropdowns({
+            platform_groups: pgs,
+            all_areas:       fullData ? fullData.all_areas    || [] : [],
+            all_processes:   fullData ? fullData.all_processes|| [] : [],
+        });
+    }
+    const el=document.getElementById('ctLegend');
+    let h='<span class="ct-legend-lbl">Platform Grouped</span>';
+    (pgs||[]).forEach(pg=>{
+        const c=PG_C[pg]||'#9ca3af';
+        h+=`<span class="ct-leg-item"><span class="ct-leg-dot" style="background:${c}"></span>${pg}</span>`;
+    });
+    el.innerHTML=h;
+}
+
+/* ── Pivot 1 ── */
+function buildPivot1(pivot1,months,useYearly){
+    const t=document.getElementById('ctPivot1');
+    if(!pivot1||!Object.keys(pivot1).length){
+        t.querySelector('thead').innerHTML='';
+        t.querySelector('tbody').innerHTML='<tr><td class="ct-nodata" colspan="20">Tidak ada data</td></tr>';
+        return;
+    }
+    let h=`<tr>
+        <th class="pvth lh" rowspan="2" style="min-width:72px">Platform Gr.</th>
+        <th class="pvth lh" rowspan="2" style="min-width:68px">Process Sta.</th>
+        <th class="pvth lh" rowspan="2" style="min-width:78px">Process Area</th>
+        <th class="pvth lh" rowspan="2" style="min-width:130px">Predefined Pro.</th>
+        <th class="pvth" colspan="${months.length}" style="background:#e0f2fe;color:#0369a1">Month</th>
+        <th class="pvth" rowspan="2" style="min-width:66px;background:#dbeafe">Grand To.</th>
+    </tr><tr>`;
+    months.forEach(m=>{
+        var lbl = useYearly ? m : (function(){ try { return new Date(m+'-01').toLocaleString('en',{month:'short'}); } catch(e){ return m; }}());
+        h+=`<th class="pvth" style="min-width:60px;background:#f0f9ff;font-weight:500">${lbl}</th>`;
+    });
+    h+='</tr>';
+    t.querySelector('thead').innerHTML=h;
+
+    let b='';
+    Object.keys(pivot1).sort().forEach(pg=>{
+        const stages=pivot1[pg];
+        // pgR: tiap area = procs.length (tanpa area total), tiap stage +1 (stage total), +1 (pg grand total)
+        let pgR=1;
+        Object.keys(stages).sort().forEach(st=>{
+            pgR+=1;
+            Object.keys(stages[st]).sort().forEach(ar=>{pgR+=Object.keys(stages[st][ar]).length;});
+        });
+        let pgF=true;
+        // Kumpulkan semua nilai untuk grand total platform
+        const pgS={},pgA=[];
+        Object.keys(stages).sort().forEach(st=>Object.keys(stages[st]).sort().forEach(ar=>{
+            const procs=stages[st][ar];
+            Object.keys(procs).sort().forEach(pr=>months.forEach(m=>{const v=procs[pr][m];if(v!=null){(pgS[m]=pgS[m]||[]).push(v);pgA.push(v);}}));
+        }));
+        Object.keys(stages).sort().forEach(st=>{
+            const areas=stages[st];
+            // stR: tiap area = procs.length (tanpa area total), +1 untuk stage total row
+            let stR=1;
+            Object.keys(areas).sort().forEach(ar=>{stR+=Object.keys(areas[ar]).length;});
+            let stF=true;
+            // Kumpulkan semua nilai untuk stage total
+            const stS={},stA=[];
+            Object.keys(areas).sort().forEach(ar=>{
+                const procs=areas[ar];
+                Object.keys(procs).sort().forEach(pr=>months.forEach(m=>{const v=procs[pr][m];if(v!=null){(stS[m]=stS[m]||[]).push(v);stA.push(v);}}));
+            });
+            Object.keys(areas).sort().forEach(ar=>{
+                const procs=areas[ar],pks=Object.keys(procs).sort(); let arF=true;
+                pks.forEach(pr=>{
+                    const d=procs[pr]; b+='<tr>';
+                    if(pgF){b+=`<td class="pvtl pg-sticky" rowspan="${pgR}">${pg}</td>`;pgF=false;}
+                    if(stF){b+=`<td class="pvtl" rowspan="${stR}" style="background:#fafafa">${st}</td>`;stF=false;}
+                    if(arF){b+=`<td class="pvtl" rowspan="${pks.length}" style="padding-left:8px">${ar}</td>`;arF=false;}
+                    b+=`<td class="pvtl" style="padding-left:14px">${pr}</td>`;
+                    months.forEach(m=>{const v=d[m];b+=v!=null?`<td class="pvtd val">${v}</td>`:`<td class="pvtd emp">—</td>`;});
+                    const gt=d['grand_total'];b+=gt!=null?`<td class="pvtd grd">${gt}</td>`:`<td class="pvtd emp">—</td>`;
+                    b+='</tr>';
+                });
+            });
+            // Stage Total row
+            b+='<tr class="pvtr-tot" style="background:#e0f2fe"><td class="pvtl" colspan="2" style="font-weight:700;color:#0369a1;font-style:normal;padding-left:6px">Total — '+st+'</td>';
+            months.forEach(m=>{const vs=stS[m]||[];const av=vs.length?r1(vs.reduce((a,b)=>a+b,0)/vs.length):null;b+=av!=null?`<td class="pvtd val" style="font-weight:700;color:#0369a1">${av}</td>`:`<td class="pvtd emp">—</td>`;});
+            const gtSt=stA.length?r1(stA.reduce((a,b)=>a+b,0)/stA.length):null;
+            b+=gtSt!=null?`<td class="pvtd grd" style="font-weight:700">${gtSt}</td>`:`<td class="pvtd emp">—</td>`;
+            b+='</tr>';
+        });
+        // Platform Grand Total row
+        b+='<tr style="background:#bfdbfe"><td class="pvtl" colspan="3" style="font-weight:700;color:#1e40af;font-size:11px;padding-left:6px">Grand Total of Process CT Average — '+pg+'</td>';
+        months.forEach(m=>{const vs=pgS[m]||[];const av=vs.length?r1(vs.reduce((a,b)=>a+b,0)/vs.length):null;b+=av!=null?`<td class="pvtd" style="font-weight:700;color:#1e40af;text-align:center">${av}</td>`:`<td class="pvtd emp">—</td>`;});
+        const gtPg=pgA.length?r1(pgA.reduce((a,b)=>a+b,0)/pgA.length):null;
+        b+=gtPg!=null?`<td class="pvtd" style="font-weight:700;color:#1e40af;text-align:center;background:#93c5fd">${gtPg}</td>`:`<td class="pvtd emp">—</td>`;
+        b+='</tr>';
+    });
+    t.querySelector('tbody').innerHTML=b;
+}
+
+/* ── Pivot 2 ── */
+function buildPivot2(pivot2,pgs){
+    const t=document.getElementById('ctPivot2');
+    if(!pivot2||!Object.keys(pivot2).length){
+        t.querySelector('thead').innerHTML='';
+        t.querySelector('tbody').innerHTML='<tr><td class="ct-nodata" colspan="20">Tidak ada data</td></tr>';
+        return;
+    }
+    let h=`<tr>
+        <th class="pvth lh" style="min-width:90px">Process Area</th>
+        <th class="pvth lh" style="min-width:140px">Predefined Process</th>
+        <th class="pvth" colspan="${pgs.length}" style="background:#e0f2fe;color:#0369a1">Platform Grouped</th>
+        <th class="pvth" style="min-width:62px;background:#dbeafe">Grand To.</th>
+    </tr><tr><th></th><th></th>`;
+    pgs.forEach(pg=>{const c=PG_C[pg]||'#9ca3af';h+=`<th class="pvth" style="min-width:46px;background:${c};color:#fff">${pg}</th>`;});
+    h+='<th style="background:#dbeafe;border:1px solid #e5e7eb"></th></tr>';
+    t.querySelector('thead').innerHTML=h;
+
+    let b='';
+    // Kumpulkan grand total seluruh tabel
+    const allS={},allA=[];
+    Object.keys(pivot2).sort().forEach(ar=>{
+        const procs=pivot2[ar],pks=Object.keys(procs).sort(); let arF=true;
+        const arS={},arA=[];
+        pks.forEach(pr=>{
+            const d=procs[pr];
+            pgs.forEach(pg=>{const v=d[pg];if(v!=null){(arS[pg]=arS[pg]||[]).push(v);arA.push(v);(allS[pg]=allS[pg]||[]).push(v);allA.push(v);}});
+        });
+        pks.forEach(pr=>{
+            const d=procs[pr]; b+='<tr>';
+            if(arF){b+=`<td class="pvtl ar-sticky" rowspan="${pks.length+1}">${ar}</td>`;arF=false;}
+            b+=`<td class="pvtl" style="padding-left:10px">${pr}</td>`;
+            pgs.forEach(pg=>{const v=d[pg];b+=v!=null?`<td class="pvtd val">${v}</td>`:`<td class="pvtd emp">—</td>`;});
+            const gt=d['grand_total'];b+=gt!=null?`<td class="pvtd grd">${gt}</td>`:`<td class="pvtd emp">—</td>`;
+            b+='</tr>';
+        });
+        // Area Total row
+        b+='<tr class="pvtr-tot" style="background:#e0f2fe"><td class="pvtl" style="font-weight:700;color:#0369a1;font-style:normal;padding-left:6px">Total</td>';
+        pgs.forEach(pg=>{const vs=arS[pg]||[];const av=vs.length?r1(vs.reduce((a,b)=>a+b,0)/vs.length):null;b+=av!=null?`<td class="pvtd val" style="font-weight:700;color:#0369a1">${av}</td>`:`<td class="pvtd emp">—</td>`;});
+        const gtAr=arA.length?r1(arA.reduce((a,b)=>a+b,0)/arA.length):null;
+        b+=gtAr!=null?`<td class="pvtd grd" style="font-weight:700">${gtAr}</td>`:`<td class="pvtd emp">—</td>`;
+        b+='</tr>';
+    });
+    // Grand Total row (semua area)
+    b+='<tr style="background:#bfdbfe"><td class="pvtl" colspan="2" style="font-weight:700;color:#1e40af;font-size:11px;padding-left:6px">Grand Total</td>';
+    pgs.forEach(pg=>{const vs=allS[pg]||[];const av=vs.length?r1(vs.reduce((a,b)=>a+b,0)/vs.length):null;b+=av!=null?`<td class="pvtd" style="font-weight:700;color:#1e40af;text-align:center">${av}</td>`:`<td class="pvtd emp">—</td>`;});
+    const gtAll=allA.length?r1(allA.reduce((a,b)=>a+b,0)/allA.length):null;
+    b+=gtAll!=null?`<td class="pvtd" style="font-weight:700;color:#1e40af;text-align:center;background:#93c5fd">${gtAll}</td>`:`<td class="pvtd emp">—</td>`;
+    b+='</tr>';
+    t.querySelector('tbody').innerHTML=b;
+}
+
+/* ── Chart ──
+   Grouped bar: X = tahun (+ Grand Avg), bar per platform
+   Data dihitung dari pivot1: grand_total per process di-average per platform per tahun
+*/
+function buildChart(cd, useYearly){
+    if(_ch){_ch.destroy();_ch=null;}
+    // Ambil pivot1 dari window (disimpan saat ctFetch)
+    const pivot1 = window._lastPivot1||{};
+    if(!pivot1||!Object.keys(pivot1).length){
+        // fallback ke chart lama jika tidak ada pivot1
+        const lbl=cd.labels.map(l=>l==='Grand Total'?'Grand Avg':useYearly?l:fmtM(l));
+        const ds=cd.datasets.map(d=>({...d,backgroundColor:(AR_C[d.label]||'#9ca3af')+'cc',borderColor:AR_C[d.label]||'#9ca3af',borderWidth:1}));
+        _ch=new Chart(document.getElementById('ctStackedCanvas'),{type:'bar',data:{labels:lbl,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:10,padding:5}}},scales:{x:{ticks:{font:{size:10}}},y:{ticks:{font:{size:10}}}}}});
+        return;
+    }
+
+    // Kumpulkan semua tahun unik dari col_keys
+    const colKeys = window._lastColKeys||[];
+    const colMode = window._lastColMode||{};
+
+    // Hitung avg CT per platform per tahun dari pivot1
+    // Struktur: { pg: { year: [grand_total values] } }
+    const pgYearVals = {};
+    const pgAllVals  = {};
+    Object.keys(pivot1).sort().forEach(pg=>{
+        pgYearVals[pg]={}; pgAllVals[pg]=[];
+        Object.values(pivot1[pg]).forEach(areas=>Object.values(areas).forEach(procs=>{
+            Object.values(procs).forEach(d=>{
+                // per col_key
+                colKeys.forEach(ck=>{
+                    const v=d[ck]; if(v!=null){
+                        (pgYearVals[pg][ck]=pgYearVals[pg][ck]||[]).push(v);
+                    }
+                });
+                const gt=d['grand_total']; if(gt!=null) pgAllVals[pg].push(gt);
+            });
+        }));
+    });
+
+    const platforms = Object.keys(pgYearVals).sort();
+    // Labels: tahun/bulan dari colKeys + 'Grand Avg'
+    const xLabels = colKeys.map(ck=>colMode[ck]==='yearly'?ck:fmtM(ck));
+    xLabels.push('Grand Avg');
+
+    const datasets = platforms.map(pg=>{
+        const c = PG_C[pg]||'#9ca3af';
+        const dataPoints = colKeys.map(ck=>{
+            const vs=pgYearVals[pg][ck]||[];
+            return vs.length?r1(vs.reduce((a,b)=>a+b,0)/vs.length):null;
+        });
+        // Grand Avg
+        const allV=pgAllVals[pg]||[];
+        dataPoints.push(allV.length?r1(allV.reduce((a,b)=>a+b,0)/allV.length):null);
+        return {
+            label: pg,
+            data: dataPoints,
+            backgroundColor: c+'cc',
+            borderColor: c,
+            borderWidth: 1,
+        };
+    });
+
+    _ch=new Chart(document.getElementById('ctStackedCanvas'),{
+        type:'bar',
+        data:{labels:xLabels, datasets:datasets},
+        options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{
+                legend:{position:'top',labels:{font:{size:10},boxWidth:10,padding:5}},
+                tooltip:{
+                    callbacks:{
+                        label: ctx=>` ${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y+' days' : '—'}`
+                    }
+                }
+            },
+            scales:{
+                x:{
+                    stacked:false,
+                    ticks:{font:{size:10}},
+                    title:{display:true, text:'Year', font:{size:10}}
+                },
+                y:{
+                    stacked:false,
+                    beginAtZero:true,
+                    title:{display:true, text:'Avg CT (days)', font:{size:10}},
+                    ticks:{font:{size:10}}
+                }
+            }
+        }
+    });
+}
+
+/* ── Platform Summary (Tujuan 3) ── */
+/* ── Estimasi ── */
+// BARU — simpan avg CT dan count (n) per platform per process
+function buildEst(pivot2, pivot_proposal){
+    _em={};
+    if(!pivot2) return;
+    Object.entries(pivot2).forEach(([area, procs])=>{
+        Object.entries(procs).forEach(([proc, pgData])=>{
+            Object.entries(pgData).forEach(([key, val])=>{
+                // skip grand_total, grand_count, dan key __count
+                if(key==='grand_total'||key==='grand_count'||key.endsWith('__count')) return;
+                // key ini adalah platform group
+                if(!_em[key]) _em[key]={};
+                _em[key][proc] = {
+                    avg : val,
+                    n   : pgData[key+'__count'] || 0,
+                    area: area,
+                };
+            });
+        });
+    });
+    // Dispatch dengan pivot_proposal sekarang ikut dikirim
+    document.dispatchEvent(new CustomEvent('ct:dataLoaded', { 
+        detail: { pivot2: pivot2, pivot_proposal: pivot_proposal }
+    }));
+}
+
+
+
+function fmtM(m){
+    if(!m||!m.includes('-'))return m;
+    const[y,mo]=m.split('-');
+    return new Date(+y,+mo-1,1).toLocaleString('en',{month:'short'})+' '+y;
+}
+
+
+
+function r1(v){return Math.round(v*10)/10;}
+
+// Auto load on page ready
+function waitForChartJs(cb, tries=0) {
+    if (typeof Chart !== 'undefined') { cb(); }
+    else if (tries < 50) { setTimeout(function(){ waitForChartJs(cb, tries+1); }, 100); }
+    else { console.error('Chart.js gagal load'); }
+}
+document.addEventListener('DOMContentLoaded', function(){
+    waitForChartJs(function(){ ctFetch(new URLSearchParams()); });
+});
+})();
+</script>
+
+
+{% endblock %}
