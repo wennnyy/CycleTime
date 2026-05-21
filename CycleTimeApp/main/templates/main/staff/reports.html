@@ -79,16 +79,7 @@
                 </button>
                 <div id="download-menu"
                      class="hidden absolute right-0 mt-1.5 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
-                    <a href="{% url 'download_report' %}{% if query or date_from or date_to %}?q={{ query }}&date_from={{ date_from }}&date_to={{ date_to }}{% endif %}"
-                       class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-red-50 hover:text-red-700 transition-colors group">
-                        <span class="flex items-center justify-center w-6 h-6 rounded bg-red-100 group-hover:bg-red-200 flex-shrink-0 text-red-600 font-bold text-xs">PDF</span>
-                        <div>
-                            <p class="font-medium leading-tight">PDF</p>
-                            <p class="text-xs text-gray-400 leading-tight">Portable Document</p>
-                        </div>
-                    </a>
-                    <div class="border-t border-gray-100"></div>
-                    <a href="{% url 'download_report_excel' %}{% if query or date_from or date_to %}?q={{ query }}&date_from={{ date_from }}&date_to={{ date_to }}{% endif %}"
+                          <a href="{% url 'download_report_excel_staff' %}{% if query or date_from or date_to %}?q={{ query }}&date_from={{ date_from }}&date_to={{ date_to }}{% endif %}"
                        class="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-green-50 hover:text-green-700 transition-colors group">
                         <span class="flex items-center justify-center w-6 h-6 rounded bg-green-100 group-hover:bg-green-200 flex-shrink-0 text-green-600 font-bold text-xs">XLS</span>
                         <div>

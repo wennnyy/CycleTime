@@ -5,255 +5,152 @@
 <!-- ── CT Analysis Dashboard ───────────────────────────── -->
 
 <style>
-.pvth{background:#f3f4f6;padding:5px 9px;border:1px solid #e5e7eb;font-weight:600;white-space:nowrap;font-size:11px;text-align:center;position:sticky;top:0;z-index:2}
-.pvth.lh{text-align:left;z-index:3}.pvtd{padding:3px 9px;border:1px solid #f0f0f0;text-align:center;white-space:nowrap;font-size:11px}
-.pvtl{padding:3px 9px;border:1px solid #f0f0f0;text-align:left;white-space:nowrap;font-size:11px}
-.pvtd.val{color:#1d4ed8}.pvtd.emp{color:#d1d5db}.pvtd.grd{background:#eff6ff;font-weight:600;color:#1e40af}
-.pvtr-tot td{background:#f8fafc;font-size:10.5px;color:#6b7280;font-style:italic}
-.pvtr-tot td.val,.pvtr-tot td.grd{color:#0369a1;font-weight:700;font-style:normal}
-.pg-sticky{background:#f0fdf4;font-weight:700;position:sticky;left:0;z-index:1}
-.ar-sticky{background:#eff6ff;font-weight:700;position:sticky;left:0;z-index:1}
-</style>
+/* Pivot table cells — tetap CSS */
+.pvth { background:#f3f4f6; padding:5px 9px; border:1px solid #e5e7eb; font-weight:600; white-space:nowrap; font-size:11px; text-align:center; position:sticky; top:0; z-index:2; color:#374151; }
+.pvth.lh { text-align:left; z-index:3; }
+.pvtd { padding:3px 9px; border:1px solid #f0f0f0; text-align:center; white-space:nowrap; font-size:11px; }
+.pvtl { padding:3px 9px; border:1px solid #f0f0f0; text-align:left; white-space:nowrap; font-size:11px; }
+.pvtd.val { color:#1d4ed8; }
+.pvtd.emp { color:#d1d5db; }
+.pvtd.grd { background:#eff6ff; font-weight:600; color:#1e40af; }
+.pvtr-tot td { background:#f8fafc; font-size:10.5px; color:#6b7280; font-style:italic; }
+.pvtr-tot td.val, .pvtr-tot td.grd { color:#0369a1; font-weight:700; font-style:normal; }
+.pg-sticky { background:#f0fdf4; font-weight:700; position:sticky; left:0; z-index:1; }
+.ar-sticky { background:#eff6ff; font-weight:700; position:sticky; left:0; z-index:1; }
+.ct-nodata { padding:28px; text-align:center; color:#9ca3af; font-size:12px; }
 
+/* Chip & bar — butuh JS toggle & transition */
+.proc-chip { display:flex; align-items:center; gap:4px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:20px; padding:3px 10px; font-size:11px; cursor:pointer; user-select:none; transition:all .15s; }
+.proc-chip:hover { background:#dcfce7; }
+.proc-chip.selected { background:#15803d; border-color:#15803d; color:#fff; }
+.proc-chip.selected:hover { background:#166534; }
+.chip-step { font-size:9px; font-weight:700; width:14px; height:14px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:#d1fae5; color:#065f46; flex-shrink:0; }
+.proc-chip.selected .chip-step { background:rgba(255,255,255,.25); color:#fff; }
+.bar-wrap { background:#e5e7eb; border-radius:3px; height:5px; margin-top:3px; overflow:hidden; }
+.bar-fill { height:5px; border-radius:3px; background:#15803d; transition:width .4s; }
 
-<!-- ═══════════════════════════════════════════════════════
-     CYCLE TIME ANALYSIS DASHBOARD
-     Layout persis seperti referensi:
-     - Judul tengah | Legend platform kanan atas
-     - Pivot1 (kiri ~75%) | Filter panel (kanan ~25%)
-     - Pivot2 (kiri 50%) | Chart (kanan 50%)
-     ═══════════════════════════════════════════════════════ -->
-
-<style>
-#ctDash *{box-sizing:border-box}
-#ctDash{width:100%;margin-top:2rem;font-size:12px}
-
-/* Title row */
-.ct-title-row{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px}
-.ct-title-row h3{font-size:28px;font-weight:700;color:#111;text-align:center;flex:1}
-.ct-legend{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:11px;background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:4px 8px;min-width:160px}
-.ct-legend-lbl{font-weight:600;color:#374151;margin-right:2px}
-.ct-leg-item{display:flex;align-items:center;gap:3px;color:#374151}
-.ct-leg-dot{width:11px;height:11px;border-radius:2px;flex-shrink:0}
-
-/* Main layout: kiri (pivot1) | kanan (filter) */
-.ct-main-row{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px}
-.ct-pivot1-wrap{flex:1;min-width:0;background:#fff;border:1px solid #d1d5db;border-radius:4px;overflow:hidden}
-.ct-pivot1-title{font-size:13px;font-weight:600;padding:6px 10px;border-bottom:1px solid #e5e7eb;background:#fafafa}
-.ct-pivot1-scroll{overflow:auto;max-height:380px}
-
-/* Filter panel kanan */
-.ct-filter-panel{width:175px;flex-shrink:0;background:#fff;border:1px solid #d1d5db;border-radius:4px;padding:10px;font-size:11px}
-.ct-filter-panel .fp-row{margin-bottom:7px}
-.ct-filter-panel .fp-row label{display:block;color:#6b7280;margin-bottom:2px;font-size:11px}
-.ct-filter-panel select{width:100%;border:1px solid #d1d5db;border-radius:3px;padding:3px 4px;font-size:11px;background:#fff}
-.ct-filter-panel .fp-hint{font-size:10px;color:#9ca3af;margin-top:1px}
-.ct-fp-btns{display:flex;gap:4px;margin-top:4px}
-.ct-fp-btns button{flex:1;padding:4px 0;border-radius:3px;font-size:11px;cursor:pointer;border:1px solid transparent}
-.ct-fp-apply{background:#15803d;color:#fff}
-.ct-fp-apply:hover{background:#166534}
-.ct-fp-reset{background:#fff;border-color:#d1d5db;color:#374151}
-.ct-fp-reset:hover{background:#f9fafb}
-
-/* Estimasi di bawah filter */
-
-
-
-.ct-est-list table{width:100%;border-collapse:collapse}
-.ct-est-list table th{background:#f3f4f6;padding:3px 5px;font-size:10px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;position:sticky;top:0;z-index:1}
-.ct-est-list table td{padding:2px 5px;border-bottom:1px solid #f9fafb;vertical-align:middle}
-.ct-est-list table tr:hover td{background:#f9fafb}
-.ct-est-list table input[type=checkbox]{cursor:pointer}
-.ct-est-list table input[type=number]{width:40px;border:1px solid #d1d5db;border-radius:3px;padding:1px 3px;font-size:10px;text-align:center}
-
-
-
-
-.ct-est-bd table{width:100%;border-collapse:collapse;font-size:10px}
-.ct-est-bd table td{padding:1px 3px;color:#374151}
-.ct-est-bd table td:last-child{text-align:right;font-weight:600;color:#15803d}
-.ct-est-bd .bd-total{font-weight:700;border-top:1px solid #bbf7d0;color:#166534}
-
-/* Bottom row: pivot2 | chart */
-.ct-bottom-row{display:flex;gap:8px;align-items:flex-start}
-.ct-pivot2-wrap{flex:1;min-width:0;background:#fff;border:1px solid #d1d5db;border-radius:4px;overflow:hidden}
-.ct-pivot2-title{font-size:13px;font-weight:600;padding:6px 10px;border-bottom:1px solid #e5e7eb;background:#fafafa}
-.ct-pivot2-scroll{overflow:auto;max-height:320px}
-.ct-chart-wrap{flex:1;min-width:0;background:#fff;border:1px solid #d1d5db;border-radius:4px;padding:10px}
-.ct-chart-title{font-size:13px;font-weight:600;margin-bottom:6px}
-.ct-chart-inner{height:290px}
-
-/* ── Platform CT Summary (Tujuan 3) ── */
-
-/* Pivot table shared */
-.pvth{background:#f3f4f6;padding:4px 8px;border:1px solid #e5e7eb;font-weight:600;white-space:nowrap;font-size:11px;text-align:center;position:sticky;top:0;z-index:2;color:#374151}
-.pvth.lh{text-align:left;z-index:3}
-.pvtd{padding:3px 8px;border:1px solid #f0f0f0;text-align:center;white-space:nowrap;font-size:11px}
-.pvtl{padding:3px 8px;border:1px solid #f0f0f0;text-align:left;white-space:nowrap;font-size:11px}
-.pvtd.val{color:#1d4ed8}
-.pvtd.emp{color:#d1d5db}
-.pvtd.grd{background:#eff6ff;font-weight:600;color:#1e40af}
-.pvtr-tot td{background:#f8fafc;font-size:10.5px;color:#6b7280;font-style:italic}
-.pvtr-tot td.val,.pvtr-tot td.grd{color:#0369a1;font-weight:700;font-style:normal}
-.pg-sticky{background:#f0fdf4;font-weight:700;position:sticky;left:0;z-index:1}
-.ar-sticky{background:#eff6ff;font-weight:700;position:sticky;left:0;z-index:1}
-.ct-nodata{padding:28px;text-align:center;color:#9ca3af;font-size:12px}
-
-/* ── Filter dropdown redesign ── */
-.ct-filter-panel{width:180px;flex-shrink:0;background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:12px;font-size:12px}
-.ct-filter-panel .fp-row{margin-bottom:10px}
-.ct-filter-panel .fp-row label{display:block;color:#6b7280;font-size:11px;font-weight:500;margin-bottom:4px}
-.ct-filter-panel select{width:100%;border:1px solid #d1d5db;border-radius:6px;padding:7px 28px 7px 10px;font-size:12px;font-weight:500;color:#111827;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center;appearance:none;-webkit-appearance:none;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.06)}
-.ct-filter-panel select:focus{outline:none;border-color:#15803d;box-shadow:0 0 0 2px #bbf7d0}
-.ct-fp-btns button{width:100%;padding:6px;border-radius:5px;cursor:pointer;border:1px solid #d1d5db;background:#fff;color:#374151;font-size:12px;transition:background .15s}
-.ct-fp-btns button:hover{background:#f9fafb}
+/* Breakdown table — nth-child & total-row tidak bisa Tailwind */
+.prop-breakdown { width:100%; border-collapse:collapse; font-size:12px; }
+.prop-breakdown th { background:#f3f4f6; padding:6px 10px; border:1px solid #e5e7eb; font-weight:600; text-align:left; font-size:11px; color:#374151; }
+.prop-breakdown th.num { text-align:right; }
+.prop-breakdown td { padding:5px 10px; border:1px solid #f0f0f0; vertical-align:middle; }
+.prop-breakdown td.num { text-align:right; color:#1d4ed8; font-weight:500; }
+.prop-breakdown tr:nth-child(even) td { background:#fafafa; }
+.prop-breakdown tr.total-row td { background:#f0fdf4; font-weight:700; color:#15803d; border-top:2px solid #bbf7d0; }
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
 
 
-<script>
-// ── CT Filter helpers — global ───────────────────────────
-function _fillSel(id, items, keepVal) {
-    var sel = document.getElementById(id);
-    if (!sel) return;
-    var prev = keepVal ? sel.value : '';
-    while (sel.options.length > 1) sel.remove(1);
-    (items || []).forEach(function(v) {
-        var o = document.createElement('option');
-        o.value = v; o.textContent = v; sel.appendChild(o);
-    });
-    if (prev) sel.value = prev;
-}
-
-window.ctFillFilterDropdowns = function(data) {
-    _fillSel('ct_fp_single', data.platform_groups || [], true);
-    _fillSel('ct_fa_single', data.all_areas       || [], true);
-    _fillSel('ct_fpr_single',data.all_processes   || [], true);
-};
-
-window.ctApplySingle = function() {
-    var p = new URLSearchParams();
-    var g  = function(id) { var e = document.getElementById(id); return e ? e.value : ''; };
-    var gm = function(id) { var e = document.getElementById(id); return e ? Array.from(e.selectedOptions).map(function(o){return o.value;}).filter(function(v){return v;}) : []; };
-    if (g('ct_fy'))         p.append('year',     g('ct_fy'));
-    // single-select filter panel
-    if (g('ct_fp_single'))  p.append('platform', g('ct_fp_single'));
-    if (g('ct_fs_single'))  p.append('stage',    g('ct_fs_single'));
-    if (g('ct_fa_single'))  p.append('area',     g('ct_fa_single'));
-    if (g('ct_fpr_single')) p.append('process',  g('ct_fpr_single'));
-    // multi-select filter (jika ada)
-    gm('ct_fp').forEach(function(v){p.append('platform',v);});
-    gm('ct_fs').forEach(function(v){p.append('stage',v);});
-    gm('ct_fa').forEach(function(v){p.append('area',v);});
-    gm('ct_fpr').forEach(function(v){p.append('process',v);});
-    window.ctFetch(p);
-};
-
-window.ctResetSingle = function() {
-    ['ct_fy','ct_fp_single','ct_fs_single','ct_fa_single','ct_fpr_single'].forEach(function(id) {
-        var e = document.getElementById(id); if (e) e.value = '';
-    });
-    ['ct_fm','ct_fp','ct_fs','ct_fa','ct_fpr'].forEach(function(id) {
-        var e = document.getElementById(id); if(e) Array.from(e.options).forEach(function(o){o.selected=false;});
-    });
-    window.ctFetch(new URLSearchParams());
-};
-</script>
-<div id="ctDash">
-
-    <!-- Title row: judul tengah + legend kanan -->
-    <div class="ct-title-row">
-        <div style="width:175px"></div><!-- spacer kiri agar judul benar-benar center -->
-        <h3>Cycle Time Analysis Dashboard</h3>
-        <div class="ct-legend" id="ctLegend" style="width:175px">
-            <span class="ct-legend-lbl">Platform Grouped</span>
+<div id="ctDash" class="w-full mt-4 text-xs overflow-hidden">
+    <!-- Title + Download PDF -->
+    <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <h3 class="flex-1 text-center text-2xl font-bold text-gray-900">Cycle Time Analysis Dashboard</h3>
+        <div class="flex items-center w-40 justify-end">
+            <button type="button" onclick="downloadDashboardPDF()"
+                class="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 transition shadow-sm">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M12 10v6m0 0l-3-3m3 3l3-3M3 17v3a1 1 0 001 1h16a1 1 0 001-1v-3"/>
+                </svg>
+                Download PDF
+            </button>
         </div>
     </div>
+    <script>
+    function downloadDashboardPDF(){
+        const url = new URL("{% url 'download_dashboard_pdf' %}", window.location.origin);
+        const year = document.getElementById('ct_fy') ? document.getElementById('ct_fy').value : '';
+        const platforms = Array.from(document.querySelectorAll('#ct_fp_single option:checked')).map(o=>o.value).filter(Boolean);
+        const stages = Array.from(document.querySelectorAll('#ct_fs_single option:checked')).map(o=>o.value).filter(Boolean);
+        const areas = Array.from(document.querySelectorAll('#ct_fa_single option:checked')).map(o=>o.value).filter(Boolean);
+        const processes = Array.from(document.querySelectorAll('#ct_fpr_single option:checked')).map(o=>o.value).filter(Boolean);
+        if(year) url.searchParams.append('year', year);
+        platforms.forEach(p=>url.searchParams.append('platform', p));
+        stages.forEach(s=>url.searchParams.append('stage', s));
+        areas.forEach(a=>url.searchParams.append('area', a));
+        processes.forEach(pr=>url.searchParams.append('process', pr));
+        window.location = url.toString();
+    }
+    </script>
 
-    <!-- Loading -->
-    <div id="ctLoading" style="background:#fff;border:1px solid #e5e7eb;border-radius:4px;padding:32px;text-align:center;color:#9ca3af;margin-bottom:8px">
-        <svg style="width:24px;height:24px;margin:0 auto 8px;display:block;animation:spin 1s linear infinite" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle style="opacity:.25" cx="12" cy="12" r="10" stroke="#16a34a" stroke-width="4"></circle>
-            <path style="opacity:.75" fill="#16a34a" d="M4 12a8 8 0 018-8v8z"></path>
+    <div id="ctLoading" class="bg-white border border-gray-200 rounded-md p-8 text-center text-gray-400 mb-4">
+        <svg class="animate-spin h-6 w-6 mx-auto mb-2 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
         </svg>
-        <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
         <p>Memuat data analisis...</p>
     </div>
 
     <div id="ctLoaded" style="display:none">
 
-        <!-- Row 1: Pivot 1 (kiri) + Filter (kanan) -->
-        <div class="ct-main-row">
-
-            <!-- Pivot 1 -->
-            <div class="ct-pivot1-wrap">
-                <div class="ct-pivot1-title" id="ctPivot1Title">Process CT per Monthly</div>
-                <div class="ct-pivot1-scroll">
-                    <table id="ctPivot1" style="border-collapse:collapse;width:max-content;min-width:100%">
-                        <thead></thead><tbody></tbody>
-                    </table>
+        <div class="flex gap-4 items-start w-full mb-4">
+            <div class="flex-1 bg-white border border-gray-200 rounded-md overflow-hidden">
+                <div class="text-sm font-semibold text-gray-900 px-3 py-2 border-b border-gray-200 bg-gray-50">Process CT per Monthly</div>
+                <div class="overflow-auto max-h-96">
+                    <table id="ctPivot1" class="w-full" style="border-collapse:collapse;width:max-content;min-width:100%"><thead></thead><tbody></tbody></table>
                 </div>
             </div>
 
-            <!-- Filter panel -->
-                <div class="ct-filter-panel">
-                    <p style="font-weight:700;font-size:12px;color:#374151;margin-bottom:10px">Filter</p>
-
-                    <div class="fp-row">
-                        <label>Year</label>
-                        <select id="ct_fy" onchange="ctApplySingle()">
+            <div class="w-44 flex-shrink-0">
+                <div class="bg-white border border-gray-200 rounded-md p-3 text-sm">
+                    <h4 class="text-sm font-semibold text-gray-700 mb-2">Filter</h4>
+                    <div class="mb-2">
+                        <label class="block text-xs text-gray-500 mb-1">Year</label>
+                        <select id="ct_fy" onchange="ctApplySingle()" class="w-full text-sm border border-gray-300 rounded px-2 py-1">
                             <option value="">All Years</option>
                             {% for y in all_years %}<option value="{{ y }}">{{ y }}</option>{% endfor %}
                         </select>
                     </div>
-                    <div class="fp-row">
-                        <label>Platform Grouped</label>
-                        <select id="ct_fp_single" onchange="ctApplySingle()">
+                    <div class="mb-2">
+                        <label class="block text-xs text-gray-500 mb-1">Platform Grouped</label>
+                        <select id="ct_fp_single" onchange="ctApplySingle()" class="w-full text-sm border border-gray-300 rounded px-2 py-1">
                             <option value="">All Platforms</option>
                         </select>
                     </div>
-                    <div class="fp-row">
-                        <label>Process Stage</label>
-                        <select id="ct_fs_single" onchange="ctApplySingle()">
+                    <div class="mb-2">
+                        <label class="block text-xs text-gray-500 mb-1">Process Stage</label>
+                        <select id="ct_fs_single" onchange="ctApplySingle()" class="w-full text-sm border border-gray-300 rounded px-2 py-1">
                             <option value="">All Stage</option>
                             {% for s in all_stages %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
                         </select>
                     </div>
-                    <div class="fp-row">
-                        <label>Process Area</label>
-                        <select id="ct_fa_single" onchange="ctApplySingle()">
+                    <div class="mb-2">
+                        <label class="block text-xs text-gray-500 mb-1">Process Area</label>
+                        <select id="ct_fa_single" onchange="ctApplySingle()" class="w-full text-sm border border-gray-300 rounded px-2 py-1">
                             <option value="">All Area</option>
                         </select>
                     </div>
-                    <div class="fp-row">
-                        <label>Predefined Process</label>
-                        <select id="ct_fpr_single" onchange="ctApplySingle()">
+                    <div class="mb-2">
+                        <label class="block text-xs text-gray-500 mb-1">Predefined Process</label>
+                        <select id="ct_fpr_single" onchange="ctApplySingle()" class="w-full text-sm border border-gray-300 rounded px-2 py-1">
                             <option value="">All Process</option>
                         </select>
                     </div>
-                    <div style="margin-top:8px">
-                        <button onclick="ctResetSingle()" style="width:100%;padding:6px;border-radius:5px;cursor:pointer;border:1px solid #d1d5db;background:#fff;color:#374151;font-size:11px">↺ Reset Filter</button>
+                    <div class="mt-2">
+                        <button onclick="ctResetSingle()" class="w-full py-2 rounded text-sm border border-gray-300 bg-white text-gray-700">↺ Reset Filter</button>
                     </div>
-                </div><!-- end filter -->
-
-        </div><!-- end row 1 -->
+                </div>
+            </div>
+        </div>
 
         <!-- Row 2: Pivot 2 (kiri) + Chart (kanan) -->
-        <div class="ct-bottom-row">
+        <div class="flex gap-3 items-start">
 
-            <div class="ct-pivot2-wrap">
-                <div class="ct-pivot2-title">Process per Platform</div>
-                <div class="ct-pivot2-scroll">
+            <div class="flex-1 min-w-0 max-w-[50%] bg-white border border-gray-200 rounded overflow-hidden">
+                <div class="text-sm font-semibold text-gray-900 px-3 py-2 border-b border-gray-200 bg-gray-50">
+                    Process per Platform
+                </div>
+                <div class="overflow-auto max-h-72 w-full">
                     <table id="ctPivot2" style="border-collapse:collapse;width:max-content;min-width:100%">
                         <thead></thead><tbody></tbody>
                     </table>
                 </div>
             </div>
 
-            <div class="ct-chart-wrap">
-                <div class="ct-chart-title" id="ctChartTitle">Total Average Of CT</div>
-                <div class="ct-chart-inner">
+            <div class="flex-1 min-w-0 max-w-[50%] bg-white border border-gray-200 rounded p-3">
+                <div class="ctChartTitle" class="text-sm font-semibold text-gray-900 mb-2">Total Average Of CT</div>
+                <div class="height:290px">
                     <canvas id="ctStackedCanvas"></canvas>
                 </div>
             </div>
@@ -264,150 +161,102 @@ window.ctResetSingle = function() {
 
 </div><!-- end ctDash -->
 
-<style>
-#ctProposal{margin-top:16px;font-size:13px}
-.prop-card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-.prop-header{background:linear-gradient(135deg,#1e3a2f 0%,#15803d 100%);color:#fff;padding:16px 20px;display:flex;align-items:center;gap:12px;border-bottom:none}
-.prop-header-icon{background:rgba(255,255,255,.15);border-radius:8px;padding:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.prop-header h4{font-size:15px;font-weight:700;margin:0;letter-spacing:.01em}
-.prop-header p{font-size:11px;color:#bbf7d0;margin:4px 0 0;opacity:.9}
-.prop-body{padding:20px}
-
-/* Input grid */
-.prop-inputs{display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:12px;align-items:end;margin-bottom:12px}
-.prop-field{display:flex;flex-direction:column;gap:4px}
-.prop-field label{font-size:11px;color:#6b7280;font-weight:500}
-.prop-field select,
-.prop-field input{border:1px solid #d1d5db;border-radius:5px;padding:6px 8px;font-size:12px;background:#fff;width:100%}
-.prop-field input[type=number]{width:100%}
-.prop-calc-btn{background:#15803d;color:#fff;border:none;border-radius:6px;padding:8px 20px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;height:36px;letter-spacing:.02em;transition:background .15s}
-.prop-calc-btn:hover{background:#166534}
-
-/* Process selection */
-.prop-process-wrap{margin-bottom:14px}
-.prop-process-wrap label{font-size:11px;color:#6b7280;font-weight:500;display:block;margin-bottom:4px}
-.prop-process-grid{display:flex;flex-wrap:wrap;gap:6px;border:1px solid #e5e7eb;border-radius:5px;padding:10px;min-height:42px;max-height:130px;overflow-y:auto}
-.prop-process-grid .ph{color:#9ca3af;font-size:12px}
-.proc-chip{display:flex;align-items:center;gap:4px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:20px;padding:3px 10px;font-size:11px;cursor:pointer;user-select:none;transition:all .15s}
-.proc-chip:hover{background:#dcfce7}
-.proc-chip.selected{background:#15803d;border-color:#15803d;color:#fff}
-.proc-chip.selected:hover{background:#166534}
-.chip-step{font-size:9px;font-weight:700;width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#d1fae5;color:#065f46;flex-shrink:0}
-.proc-chip.selected .chip-step{background:rgba(255,255,255,.25);color:#fff}
-
-/* Result section */
-.prop-result{display:none;border-top:1px solid #e5e7eb;padding-top:14px;margin-top:2px}
-.prop-result-header{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px}
-.prop-summary-box{background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #bbf7d0;border-radius:10px;padding:16px 24px;display:flex;gap:28px;flex-wrap:wrap;box-shadow:0 1px 3px rgba(0,0,0,.05)}
-.prop-summary-item{text-align:center}
-.prop-summary-item .val{font-size:26px;font-weight:700;color:#15803d;line-height:1}
-.prop-summary-item .lbl{font-size:11px;color:#6b7280;margin-top:2px}
-.prop-meta{font-size:11px;color:#6b7280;display:flex;flex-direction:column;gap:3px;justify-content:center}
-
-/* Breakdown table */
-.prop-breakdown{width:100%;border-collapse:collapse;font-size:12px}
-.prop-breakdown th{background:#f3f4f6;padding:6px 10px;border:1px solid #e5e7eb;font-weight:600;text-align:left;font-size:11px;color:#374151}
-.prop-breakdown th.num{text-align:right}
-.prop-breakdown td{padding:5px 10px;border:1px solid #f0f0f0;vertical-align:middle}
-.prop-breakdown td.num{text-align:right;color:#1d4ed8;font-weight:500}
-.prop-breakdown td.sub{color:#6b7280;font-size:11px}
-.prop-breakdown tr:nth-child(even) td{background:#fafafa}
-.prop-breakdown tr.total-row td{background:#f0fdf4;font-weight:700;color:#15803d;border-top:2px solid #bbf7d0}
-.prop-breakdown td .bar-wrap{background:#e5e7eb;border-radius:3px;height:5px;margin-top:3px;overflow:hidden}
-.prop-breakdown td .bar-fill{height:5px;border-radius:3px;background:#15803d;transition:width .4s}
-
-/* Badges */
-.prop-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
-.badge-low{background:#dcfce7;color:#166534}
-.badge-med{background:#fef9c3;color:#854d0e}
-.badge-high{background:#fee2e2;color:#991b1b}
-</style>
-
-<div id="ctProposal">
-    <div class="prop-card">
+<div id="ctProposal" class="mt-4 text-sm">
+    <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
 
         <!-- Header -->
-        <div class="prop-header">
-            <div class="prop-header-icon">
-                <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="flex items-center gap-3 px-5 py-4"
+             style="background:linear-gradient(135deg,#1e3a2f 0%,#15803d 100%)">
+            <div class="bg-white/15 rounded-lg p-2 flex items-center justify-center flex-shrink-0">
+                <svg width="22" height="22" fill="none" stroke="white" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                           d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 11h.01M12 11h.01M15 11h.01M4 19h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                 </svg>
             </div>
             <div>
-                <h4>CT Proposal &mdash; Cycle Time Estimation</h4>
-                <p>Estimate cycle time for new orders based on historical process data</p>
+                <h4 class="text-base font-bold text-white tracking-tight">CT Proposal &mdash; Cycle Time Estimation</h4>
+                <p class="text-xs text-green-200 mt-1 opacity-90">Estimate cycle time for new orders based on historical process data</p>
             </div>
         </div>
 
-        <div class="prop-body">
+        <!-- Body -->
+        <div class="p-5">
 
             <!-- Input row -->
-            <div class="prop-inputs">
-                <div class="prop-field">
-                    <label>Platform</label>
-                    <select id="propPlatform" onchange="propUpdateProcess()">
+            <div class="grid gap-3 mb-3" style="grid-template-columns:1fr 1fr 2fr auto;align-items:end">
+                <div class="flex flex-col gap-1">
+                    <label class="text-xs text-gray-500 font-medium">Platform</label>
+                    <select id="propPlatform" onchange="propUpdateProcess()"
+                            class="border border-gray-300 rounded px-2 py-1.5 text-xs bg-white w-full">
                         <option value="">Select Platform</option>
                     </select>
                 </div>
-                <div class="prop-field">
-                    <label>Quantity (Unit)</label>
-                    <input type="number" id="propQty" min="1" value="1000" placeholder="Jumlah Unit">
+                <div class="flex flex-col gap-1">
+                    <label class="text-xs text-gray-500 font-medium">Quantity (Unit)</label>
+                    <input type="number" id="propQty" min="1" value="1000" placeholder="Jumlah Unit"
+                           class="border border-gray-300 rounded px-2 py-1.5 text-xs bg-white w-full">
                 </div>
-                <div class="prop-field">
-                    <label>Start Date</label>
-                    <input type="date" id="propStartDate">
+                <div class="flex flex-col gap-1">
+                    <label class="text-xs text-gray-500 font-medium">Start Date</label>
+                    <input type="date" id="propStartDate"
+                           class="border border-gray-300 rounded px-2 py-1.5 text-xs bg-white w-full">
                 </div>
-                <button class="prop-calc-btn" onclick="propCalculate()">Calculate Estimate</button>
+                <button onclick="propCalculate()"
+                        class="bg-green-700 hover:bg-green-800 text-white text-xs font-semibold px-5 rounded-md cursor-pointer whitespace-nowrap"
+                        style="height:32px">
+                    Calculate Estimate
+                </button>
             </div>
 
-            <!-- Process selection (chips) -->
-            <div class="prop-process-wrap">
-                <label>
+            <!-- Process chips -->
+            <div class="mb-3">
+                <label class="block text-xs text-gray-500 font-medium mb-1">
                     Process Required
-                    <span id="propProcCount" style="color:#15803d;font-weight:600"></span>
+                    <span id="propProcCount" class="text-green-700 font-semibold"></span>
                 </label>
-                <div class="prop-process-grid" id="propProcGrid">
-                    <span class="ph">Choose a platform first</span>
+                <div id="propProcGrid"
+                     class="flex flex-wrap gap-1.5 border border-gray-200 rounded p-2.5 min-h-[42px] max-h-32 overflow-y-auto">
+                    <span class="text-gray-400 text-xs">Choose a platform first</span>
                 </div>
             </div>
 
             <!-- Result -->
-            <div class="prop-result" id="propResult">
+            <div id="propResult" style="display:none" class="border-t border-gray-200 pt-3 mt-1">
 
                 <!-- Summary boxes -->
-                <div class="prop-result-header">
-                    <div class="prop-summary-box">
-                        <div class="prop-summary-item">
-                            <div class="val" id="propTotalDays">—</div>
-                            <div class="lbl">Total CT (days)</div>
+                <div class="flex items-start justify-between flex-wrap gap-3 mb-3">
+                    <div class="flex gap-7 flex-wrap items-center px-6 py-4 rounded-xl border border-green-200 shadow-sm"
+                         style="background:linear-gradient(135deg,#f0fdf4,#dcfce7)">
+                        <div class="text-center">
+                            <div id="propTotalDays" class="text-3xl font-bold text-green-700 leading-none">—</div>
+                            <div class="text-xs text-gray-500 mt-1">Total CT (days)</div>
                         </div>
-                        <div class="prop-summary-item">
-                            <div class="val" id="propWorkDays">—</div>
-                            <div class="lbl">Estimated Working Days</div>
+                        <div class="text-center">
+                            <div id="propWorkDays" class="text-3xl font-bold text-green-700 leading-none">—</div>
+                            <div class="text-xs text-gray-500 mt-1">Estimated Working Days</div>
                         </div>
-                        <div class="prop-summary-item">
-                            <div class="val" id="propBottleneck" style="font-size:13px;color:#d97706">—</div>
-                            <div class="lbl">⚠ Bottleneck Process</div>
+                        <div class="text-center">
+                            <div id="propBottleneck" class="text-sm font-bold text-amber-500 leading-none">—</div>
+                            <div class="text-xs text-gray-500 mt-1">⚠ Bottleneck Process</div>
                         </div>
-                        <div class="prop-summary-item">
-                            <div class="val" id="propStartDateOut" style="font-size:15px">—</div>
-                            <div class="lbl">Start Date</div>
+                        <div class="text-center">
+                            <div id="propStartDateOut" class="text-base font-bold text-green-700 leading-none">—</div>
+                            <div class="text-xs text-gray-500 mt-1">Start Date</div>
                         </div>
-                        <div class="prop-summary-item" style="display:flex;align-items:center;padding-top:4px">
-                            <span style="font-size:18px;color:#15803d;padding:0 8px">→</span>
+                        <div class="flex items-center pt-1">
+                            <span class="text-lg text-green-700 px-2">→</span>
                         </div>
-                        <div class="prop-summary-item">
-                            <div class="val" id="propDueDate" style="font-size:15px">—</div>
-                            <div class="lbl">Due Date</div>
+                        <div class="text-center">
+                            <div id="propDueDate" class="text-base font-bold text-green-700 leading-none">—</div>
+                            <div class="text-xs text-gray-500 mt-1">Due Date</div>
                         </div>
                     </div>
-                    <div class="prop-meta">
+                    <div class="text-xs text-gray-500 flex flex-col gap-1 justify-center">
                         <div>Platform: <strong id="propMetaPlatform">—</strong></div>
                         <div>Quantity: <strong id="propMetaQty">—</strong></div>
                         <div>Process selected: <strong id="propMetaProc">—</strong></div>
                         <div>Σ CT/unit: <strong id="propSumCT">—</strong> days/unit</div>
-                        <div style="font-size:10px;font-family:monospace;color:#6b7280" id="propFormula"></div>
+                        <div id="propFormula" class="font-mono text-gray-400" style="font-size:10px"></div>
                     </div>
                 </div>
 
@@ -430,8 +279,8 @@ window.ctResetSingle = function() {
 
             </div><!-- end propResult -->
 
-        </div><!-- end prop-body -->
-    </div><!-- end prop-card -->
+        </div><!-- end body -->
+    </div><!-- end card -->
 </div><!-- end ctProposal -->
 
 
@@ -659,38 +508,44 @@ window.ctResetSingle = function() {
 
 <script>
 (function(){
-const PG_C={'BGA':'#2563eb','SOT':'#9ca3af','QFN':'#d97706','QFP':'#111827','SOP':'#dc2626','TO':'#374151','Other':'#6b7280'};
-const AR_C={'Die Attach':'#2563eb','Wire Bond':'#16a34a','Molding':'#dc2626','Trim & Form':'#d97706','Marking':'#7c3aed','Plating':'#0891b2','Ball Mount':'#be185d','Quality Control':'#059669','Testing':'#ea580c','Reliability Test':'#4338ca','Packing':'#0d9488','Shipment':'#b45309','Wafer Preparation':'#6d28d9','Other':'#9ca3af'};
+const PG_C = window.PG_C = {'BGA':'#2563eb','SOT':'#9ca3af','QFN':'#d97706','QFP':'#111827','SOP':'#dc2626','TO':'#374151','Other':'#6b7280'};
+const AR_C = window.AR_C = {'Die Attach':'#2563eb','Wire Bond':'#16a34a','Molding':'#dc2626','Trim & Form':'#d97706','Marking':'#7c3aed','Plating':'#0891b2','Ball Mount':'#be185d','Quality Control':'#059669','Testing':'#ea580c','Reliability Test':'#4338ca','Packing':'#0d9488','Shipment':'#b45309','Wafer Preparation':'#6d28d9','Other':'#9ca3af'};
 let _ch=null,_em={};
 
 function gsel(id){return Array.from(document.getElementById(id).selectedOptions).map(o=>o.value).filter(v=>v);}
 
-window.ctApply=function(){
-    const p=new URLSearchParams();
-    // Ambil year dari single filter panel
-    const fy=document.getElementById('ct_fy'); if(fy&&fy.value) p.append('year',fy.value);
-    gsel('ct_fm').forEach(v=>p.append('month',v));
-    gsel('ct_fp').forEach(v=>p.append('platform',v));
-    gsel('ct_fs').forEach(v=>p.append('stage',v));
-    gsel('ct_fa').forEach(v=>p.append('area',v));
-    gsel('ct_fpr').forEach(v=>p.append('process',v));
-    // Juga ambil dari single-select jika ada
-    const fps=document.getElementById('ct_fp_single'); if(fps&&fps.value) p.append('platform',fps.value);
-    const fss=document.getElementById('ct_fs_single'); if(fss&&fss.value) p.append('stage',fss.value);
-    const fas=document.getElementById('ct_fa_single'); if(fas&&fas.value) p.append('area',fas.value);
-    const fprs=document.getElementById('ct_fpr_single'); if(fprs&&fprs.value) p.append('process',fprs.value);
-    window.ctFetch(p);
+window.downloadDashboardPDF = function() {
+    const params = new URLSearchParams();
+
+    // Ambil nilai dari filter yang ada di dashboard
+    const year = document.getElementById('ct_fy') ? document.getElementById('ct_fy').value : '';
+    const platform = document.getElementById('ct_fp_single') ? document.getElementById('ct_fp_single').value : '';
+    const stage = document.getElementById('ct_fs_single') ? document.getElementById('ct_fs_single').value : '';
+    const area = document.getElementById('ct_fa_single') ? document.getElementById('ct_fa_single').value : '';
+    const process = document.getElementById('ct_fpr_single') ? document.getElementById('ct_fpr_single').value : '';
+
+    if (year) params.append('year', year);
+    if (platform) params.append('platform', platform);
+    if (stage) params.append('stage', stage);
+    if (area) params.append('area', area);
+    if (process) params.append('process', process);
+
+    const queryString = params.toString();
+    const url = '/dashboard/ct-analysis/download/pdf/' + (queryString ? '?' + queryString : '');
+
+    window.location.href = url;
 };
 
-window.ctReset=function(){
-    ['ct_fm','ct_fp','ct_fs','ct_fa','ct_fpr'].forEach(id=>{
-        const el=document.getElementById(id); if(el) Array.from(el.options).forEach(o=>o.selected=false);
-    });
-    // Reset juga single-select panel
-    ['ct_fy','ct_fp_single','ct_fs_single','ct_fa_single','ct_fpr_single'].forEach(id=>{
-        const el=document.getElementById(id); if(el) el.value='';
-    });
-    window.ctFetch(new URLSearchParams());
+
+
+window.buildLegend = window.buildLegend || function(pgs, fullData) {
+    if (typeof window.ctFillFilterDropdowns === 'function') {
+        window.ctFillFilterDropdowns({
+            platform_groups: pgs,
+            all_areas: fullData ? fullData.all_areas || [] : [],
+            all_processes: fullData ? fullData.all_processes || [] : [],
+        });
+    }
 };
 
 window.ctFetch = async function ctFetch(params){
@@ -722,22 +577,7 @@ window.ctFetch = async function ctFetch(params){
     }
 }
 
-function buildLegend(pgs, fullData){
-    if (typeof window.ctFillFilterDropdowns === 'function') {
-        window.ctFillFilterDropdowns({
-            platform_groups: pgs,
-            all_areas:       fullData ? fullData.all_areas    || [] : [],
-            all_processes:   fullData ? fullData.all_processes|| [] : [],
-        });
-    }
-    const el=document.getElementById('ctLegend');
-    let h='<span class="ct-legend-lbl">Platform Grouped</span>';
-    (pgs||[]).forEach(pg=>{
-        const c=PG_C[pg]||'#9ca3af';
-        h+=`<span class="ct-leg-item"><span class="ct-leg-dot" style="background:${c}"></span>${pg}</span>`;
-    });
-    el.innerHTML=h;
-}
+
 
 /* ── Pivot 1 ── */
 function buildPivot1(pivot1,months,useYearly){
@@ -884,7 +724,7 @@ function buildChart(cd, useYearly){
         // fallback ke chart lama jika tidak ada pivot1
         const lbl=cd.labels.map(l=>l==='Grand Total'?'Grand Avg':useYearly?l:fmtM(l));
         const ds=cd.datasets.map(d=>({...d,backgroundColor:(AR_C[d.label]||'#9ca3af')+'cc',borderColor:AR_C[d.label]||'#9ca3af',borderWidth:1}));
-        _ch=new Chart(document.getElementById('ctStackedCanvas'),{type:'bar',data:{labels:lbl,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:10,padding:5}}},scales:{x:{ticks:{font:{size:10}}},y:{ticks:{font:{size:10}}}}}});
+        _ch=new Chart(document.getElementById('ctStackedCanvas'),{type:'bar',data:{labels:lbl,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{font:{size:10}}},y:{ticks:{font:{size:10}}}}}});
         return;
     }
 
@@ -940,7 +780,7 @@ function buildChart(cd, useYearly){
         options:{
             responsive:true, maintainAspectRatio:false,
             plugins:{
-                legend:{position:'top',labels:{font:{size:10},boxWidth:10,padding:5}},
+                legend:{display:false},
                 tooltip:{
                     callbacks:{
                         label: ctx=>` ${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y+' days' : '—'}`

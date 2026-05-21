@@ -6,51 +6,36 @@
 # Pure utilities → utils.py
 # ============================================================
 
-from functools import wraps
 from django.shortcuts import render, redirect
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
-from django.utils import timezone
 from django.db.models import Avg, Count, Q, Min, Max
 from django.db.models import Case, When, Value, IntegerField, Max as MaxId
 from django.core.paginator import Paginator
-from django.conf import settings
 from datetime import date, datetime
-
-from requests import request
 
 from main.models import User, RawTicket, SyncLog, FlagHistory, ErrorTicket
 from main.process_groups import enrich_ticket, get_platform
-from main.utils import hitung_cycle_time, get_page_range
-from main.services import hitung_available_records, sync_jira_data
+from main.utils import hitung_cycle_time, get_page_range, format_date_range, role_required
+from main.services import (
+    hitung_available_records, sync_jira_data,
+    get_published_syncs, get_dashboard_filter_options,
+    get_published_clean_ticket_queryset,
+    paginate_and_enrich_tickets,
+    get_chart_data, compute_ct_analysis,
+    get_ct_analysis_filter_options, generate_pdf,
+)
 
+import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-# ======================================================
-# HELPER: ROLE DECORATOR
-# ======================================================
-def role_required(role_name):
-    def decorator(view_func):
-        @wraps(view_func)
-        def wrapper(request, *args, **kwargs):
-            if not request.user.is_authenticated:
-                return redirect('login')
-            if request.user.role != role_name:
-                return HttpResponseForbidden("⛔ Anda tidak memiliki akses ke halaman ini")
-            return view_func(request, *args, **kwargs)
-        return wrapper
-    return decorator
-
-
-def get_published_syncs():
-    """Hanya data yang sudah di-publish via tombol Create Dashboard."""
-    return SyncLog.objects.filter(status='published').values_list('id', flat=True)
+# `get_published_syncs` moved to `main.services.get_published_syncs`
 
 
 # ======================================================
@@ -95,25 +80,7 @@ def redirect_by_role(user):
 # ======================================================
 # DASHBOARD ADMIN
 # ======================================================
-def get_dashboard_filter_options():
-    """Ambil semua nilai unik untuk filter dropdown di dashboard."""
-    from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
-    published = get_published_syncs()
-
-    years_qs = RawTicket.objects.filter(
-        parent_key__isnull=False,
-        start_date__isnull=False,
-        cycle_time__isnull=False,
-        sync_log__in=published,
-    ).dates('start_date', 'year')
-
-    return {
-        'all_years':     sorted(set(str(d.year) for d in years_qs)),
-        'all_platforms': sorted(set(PACKAGE_PLATFORM.values())),
-        'all_stages':    sorted(set(pg[0] for pg in PROCESS_GROUP.values())),
-        'all_areas':     sorted(set(pg[1] for pg in PROCESS_GROUP.values())),
-        'all_processes': sorted(set(PROCESS_GROUP.keys())),
-    }
+# `get_dashboard_filter_options` moved to `main.services.get_dashboard_filter_options`
 
 
 @login_required
@@ -146,23 +113,12 @@ def dashboard_admin(request):
 @role_required('admin')
 def admin_sync(request):
 
-    BULAN_ID = {
-        1:'Januari', 2:'Februari', 3:'Maret',    4:'April',
-        5:'Mei',     6:'Juni',     7:'Juli',      8:'Agustus',
-        9:'September',10:'Oktober',11:'November', 12:'Desember',
-    }
     # untuk membuat tampilan range tgl yang sudah ada di sistem.
     def get_data_range_str():
         dr = RawTicket.objects.filter(start_date__isnull=False).aggregate(
             earliest=Min('start_date'), latest=Max('start_date')
         )
-        e, l = dr['earliest'], dr['latest']
-        if e and l:
-            # SEBELUM: hanya bulan dan tahun
-            # return f"{BULAN_ID[e.month]} {e.year} — {BULAN_ID[l.month]} {l.year}"
-            # SESUDAH: tanggal lengkap
-            return f"{e.day} {BULAN_ID[e.month]} {e.year} — {l.day} {BULAN_ID[l.month]} {l.year}"
-        return None
+        return format_date_range(dr['earliest'], dr['latest'])
 
     # ── POST ─────────────────────────────────────────────────────────────────
     if request.method == 'POST':
@@ -515,12 +471,7 @@ def delete_user(request, user_id):
     return redirect('admin_users')
 
 
-# ======================================================
-# REPORTS ADMIN
-# ======================================================
-@login_required
-@role_required('admin')
-def admin_reports(request):
+def _reports_view(request, template_name):
     query       = request.GET.get('q', '')
     date_from   = request.GET.get('date_from', '')
     date_to     = request.GET.get('date_to', '')
@@ -529,237 +480,63 @@ def admin_reports(request):
     if per_page not in [10, 25, 50, 100]:
         per_page = 10
 
-    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
-    qs = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=False
-    ).order_by('ticket_key')
+    qs = get_published_clean_ticket_queryset(query, date_from, date_to)
 
-    if query:
-        qs = qs.filter(
-            Q(ticket_key__icontains=query) |
-            Q(platform__icontains=query)   |
-            Q(predefined_process__icontains=query)
-        )
-    if date_from:
-        qs = qs.filter(start_date__gte=date_from)
-    if date_to:
-        qs = qs.filter(start_date__lte=date_to)
+    published = get_published_syncs()
+    total_main = RawTicket.objects.filter(
+        sync_log__in=published,
+        parent_key__isnull=True
+    ).count()
+    total_sub = RawTicket.objects.filter(
+        sync_log__in=published,
+        parent_key__isnull=False
+    ).count()
 
-    seen, unique_ids = set(), []
-    for t in qs.values('id', 'ticket_key'):
-        if t['ticket_key'] not in seen:
-            seen.add(t['ticket_key'])
-            unique_ids.append(t['id'])
-    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
-
-    total_main     = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=True).count()
-    total_sub      = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=False).count()
-    total_filtered = qs.count()
-
-    paginator   = Paginator(qs, per_page)
-    page_obj    = paginator.get_page(page_number)
-    start_index = (page_obj.number - 1) * per_page + 1
-    end_index   = min(page_obj.number * per_page, total_filtered)
-
-    data = []
-    for t in page_obj.object_list:
-        item = {
-            'ticket_key':         t.ticket_key,
-            'parent_key':         t.parent_key,
-            'platform':           t.platform,
-            'package_name':       t.package_name,
-            'predefined_process': t.predefined_process,
-            'status':             t.status,
-            'start_date':         t.start_date,
-            'due_date':           t.due_date,
-            'cycle_time':         t.cycle_time,
-            'has_ct':             t.cycle_time is not None,
-        }
-        data.append(enrich_ticket(item))
-
+    page_data = paginate_and_enrich_tickets(qs, page_number, per_page)
     context = {
-        'data':           data,
+        'data':           page_data['data'],
         'query':          query,
         'date_from':      date_from,
         'date_to':        date_to,
         'per_page':       per_page,
-        'page_obj':       page_obj,
-        'paginator':      paginator,
-        'page_range':     get_page_range(page_obj.number, paginator.num_pages),
-        'start_index':    start_index,
-        'end_index':      end_index,
-        'total_filtered': total_filtered,
+        'page_obj':       page_data['page_obj'],
+        'paginator':      page_data['paginator'],
+        'page_range':     get_page_range(page_data['page_obj'].number, page_data['paginator'].num_pages),
+        'start_index':    page_data['start_index'],
+        'end_index':      page_data['end_index'],
+        'total_filtered': page_data['total_filtered'],
         'total_main':     total_main,
         'total_sub':      total_sub,
     }
-    return render(request, 'main/admin/reports.html', context)
+    return render(request, template_name, context)
 
 
+# ======================================================
+# REPORTS ADMIN
+# ======================================================
 @login_required
 @role_required('admin')
-def download_report(request):
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib import colors
-    from reportlab.lib.units import cm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    import io
-
-    query     = request.GET.get('q', '')
-    date_from = request.GET.get('date_from', '')
-    date_to   = request.GET.get('date_to', '')
-
-    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
-    qs = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=False
-    ).order_by('ticket_key')
-
-    if query:
-        qs = qs.filter(
-            Q(ticket_key__icontains=query) |
-            Q(platform__icontains=query)   |
-            Q(predefined_process__icontains=query)
-        )
-    if date_from:
-        qs = qs.filter(start_date__gte=date_from)
-    if date_to:
-        qs = qs.filter(start_date__lte=date_to)
-
-    seen, unique_ids = set(), []
-    for t in qs.values('id', 'ticket_key'):
-        if t['ticket_key'] not in seen:
-            seen.add(t['ticket_key'])
-            unique_ids.append(t['id'])
-    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=landscape(A4),
-        leftMargin=1*cm, rightMargin=1*cm,
-        topMargin=1.5*cm, bottomMargin=1.5*cm,
-    )
-    styles   = getSampleStyleSheet()
-    elements = []
-
-    title_style = ParagraphStyle(
-        'ReportTitle', parent=styles['Heading1'],
-        fontSize=14, spaceAfter=4, textColor=colors.HexColor('#1e293b'),
-    )
-    elements.append(Paragraph("Clean Ticket Report", title_style))
-
-    sub_parts = []
-    if query:     sub_parts.append(f"Search: {query}")
-    if date_from: sub_parts.append(f"From: {date_from}")
-    if date_to:   sub_parts.append(f"To: {date_to}")
-    sub_parts.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    sub_parts.append(f"Total records: {qs.count()}")
-    elements.append(Paragraph("  |  ".join(sub_parts), styles['Normal']))
-    elements.append(Spacer(1, 0.5*cm))
-
-    headers = [
-        'No', 'Ticket ID', 'Parent', 'Package', 'Platform',
-        'Process', 'Stage', 'Area', 'Start Date', 'Due Date', 'CT (days)', 'Status',
-    ]
-    table_data = [headers]
-
-    for i, t in enumerate(qs, start=1):
-        item = {
-            'ticket_key':         t.ticket_key,
-            'parent_key':         t.parent_key,
-            'platform':           t.platform,
-            'package_name':       t.package_name,
-            'predefined_process': t.predefined_process,
-            'status':             t.status,
-            'start_date':         t.start_date,
-            'due_date':           t.due_date,
-            'cycle_time':         t.cycle_time,
-        }
-        enriched = enrich_ticket(item)
-        ct_val   = f"{enriched['cycle_time']:.1f}" if enriched.get('cycle_time') else '—'
-        table_data.append([
-            str(i),
-            enriched.get('ticket_key', '—'),
-            enriched.get('parent_key') or '—',
-            enriched.get('package_name') or '—',
-            enriched.get('platform_group') or '—',
-            enriched.get('predefined_process') or '—',
-            enriched.get('process_stage') or '—',
-            enriched.get('process_area') or '—',
-            str(enriched.get('start_date') or '—'),
-            str(enriched.get('due_date') or '—'),
-            ct_val,
-            enriched.get('status', '—'),
-        ])
-
-    col_widths = [
-        0.8*cm, 2.8*cm, 2.8*cm, 2.5*cm, 2.5*cm,
-        3.2*cm, 2.5*cm, 2.5*cm, 2.2*cm, 2.2*cm, 1.8*cm, 2.2*cm,
-    ]
-    table = Table(table_data, colWidths=col_widths, repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND',    (0, 0), (-1, 0),  colors.HexColor('#1e293b')),
-        ('TEXTCOLOR',     (0, 0), (-1, 0),  colors.white),
-        ('FONTNAME',      (0, 0), (-1, 0),  'Helvetica-Bold'),
-        ('FONTSIZE',      (0, 0), (-1, 0),  7),
-        ('FONTSIZE',      (0, 1), (-1, -1), 6.5),
-        ('FONTNAME',      (0, 1), (-1, -1), 'Helvetica'),
-        ('ALIGN',         (0, 0), (-1, -1), 'CENTER'),
-        ('ALIGN',         (1, 1), (2, -1),  'LEFT'),
-        ('ALIGN',         (5, 1), (7, -1),  'LEFT'),
-        ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
-        ('ROWBACKGROUNDS',(0, 1), (-1, -1), [colors.white, colors.HexColor('#f1f5f9')]),
-        ('GRID',          (0, 0), (-1, -1), 0.4, colors.HexColor('#cbd5e1')),
-        ('LINEBELOW',     (0, 0), (-1, 0),  1.2, colors.HexColor('#3b82f6')),
-        ('TOPPADDING',    (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ('LEFTPADDING',   (0, 0), (-1, -1), 4),
-        ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
-    ]))
-    elements.append(table)
-
-    doc.build(elements)
-    buffer.seek(0)
-
-    filename = f"report-{datetime.now().strftime('%Y%m%d-%H%M%S')}.pdf"
-    response = HttpResponse(buffer, content_type='application/pdf')
-    response['Content-Disposition'] = f'attachment; filename="{filename}"'
-    return response
+def admin_reports(request):
+    return _reports_view(request, 'main/admin/reports.html')
 
 
 @login_required
 @role_required('admin')
 def download_report_excel(request):
+    # Delegate to shared generator so other roles can reuse it without duplication
+    query     = request.GET.get('q', '')
+    date_from = request.GET.get('date_from', '')
+    date_to   = request.GET.get('date_to', '')
+    return _generate_report_excel_response(query, date_from, date_to)
+
+
+def _generate_report_excel_response(query, date_from, date_to):
     import io
     import openpyxl
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
 
-    query     = request.GET.get('q', '')
-    date_from = request.GET.get('date_from', '')
-    date_to   = request.GET.get('date_to', '')
-
-    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
-    qs = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=False
-    ).order_by('ticket_key')
-
-    if query:
-        qs = qs.filter(
-            Q(ticket_key__icontains=query) |
-            Q(platform__icontains=query)   |
-            Q(predefined_process__icontains=query)
-        )
-    if date_from:
-        qs = qs.filter(start_date__gte=date_from)
-    if date_to:
-        qs = qs.filter(start_date__lte=date_to)
-
-    seen, unique_ids = set(), []
-    for t in qs.values('id', 'ticket_key'):
-        if t['ticket_key'] not in seen:
-            seen.add(t['ticket_key'])
-            unique_ids.append(t['id'])
-    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
+    qs = get_published_clean_ticket_queryset(query, date_from, date_to)
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -998,19 +775,10 @@ def staff_view_data(request):
         page_range = get_page_range(page_obj.number, paginator.num_pages)
 
     # ── Data range string ─────────────────────────────────────
-    BULAN_ID = {
-        1:'Januari', 2:'Februari', 3:'Maret',    4:'April',
-        5:'Mei',     6:'Juni',     7:'Juli',      8:'Agustus',
-        9:'September',10:'Oktober',11:'November', 12:'Desember',
-    }
     dr = RawTicket.objects.filter(start_date__isnull=False).aggregate(
         earliest=Min('start_date'), latest=Max('start_date')
     )
-    e, l = dr['earliest'], dr['latest']
-    data_range_str = (
-        f"{e.day} {BULAN_ID[e.month]} {e.year} — {l.day} {BULAN_ID[l.month]} {l.year}"
-        if e and l else None
-    )
+    data_range_str = format_date_range(dr['earliest'], dr['latest'])
 
     total_all_sync  = RawTicket.objects.filter(
         parent_key__isnull=False, sync_log=last_sync
@@ -1042,78 +810,25 @@ def staff_view_data(request):
 @login_required
 @role_required('staff')
 def staff_reports(request):
-    query       = request.GET.get('q', '')
-    date_from   = request.GET.get('date_from', '')
-    date_to     = request.GET.get('date_to', '')
-    page_number = request.GET.get('page', 1)
-    per_page    = int(request.GET.get('per_page', 10))
-    if per_page not in [10, 25, 50, 100]:
-        per_page = 10
+    return _reports_view(request, 'main/staff/reports.html')
 
-    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
-    qs = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=False
-    ).order_by('ticket_key')
 
-    if query:
-        qs = qs.filter(
-            Q(ticket_key__icontains=query) |
-            Q(platform__icontains=query)   |
-            Q(predefined_process__icontains=query)
-        )
-    if date_from:
-        qs = qs.filter(start_date__gte=date_from)
-    if date_to:
-        qs = qs.filter(start_date__lte=date_to)
+@login_required
+@role_required('management')
+def download_report_excel_management(request):
+    query     = request.GET.get('q', '')
+    date_from = request.GET.get('date_from', '')
+    date_to   = request.GET.get('date_to', '')
+    return _generate_report_excel_response(query, date_from, date_to)
 
-    seen, unique_ids = set(), []
-    for t in qs.values('id', 'ticket_key'):
-        if t['ticket_key'] not in seen:
-            seen.add(t['ticket_key'])
-            unique_ids.append(t['id'])
-    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
 
-    total_main     = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=True).count()
-    total_sub      = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=False).count()
-    total_filtered = qs.count()
-
-    paginator   = Paginator(qs, per_page)
-    page_obj    = paginator.get_page(page_number)
-    start_index = (page_obj.number - 1) * per_page + 1
-    end_index   = min(page_obj.number * per_page, total_filtered)
-
-    data = []
-    for t in page_obj.object_list:
-        item = {
-            'ticket_key':         t.ticket_key,
-            'parent_key':         t.parent_key,
-            'platform':           t.platform,
-            'package_name':       t.package_name,
-            'predefined_process': t.predefined_process,
-            'status':             t.status,
-            'start_date':         t.start_date,
-            'due_date':           t.due_date,
-            'cycle_time':         t.cycle_time,
-            'has_ct':             t.cycle_time is not None,
-        }
-        data.append(enrich_ticket(item))
-
-    context = {
-        'data':           data,
-        'query':          query,
-        'date_from':      date_from,
-        'date_to':        date_to,
-        'per_page':       per_page,
-        'page_obj':       page_obj,
-        'paginator':      paginator,
-        'page_range':     get_page_range(page_obj.number, paginator.num_pages),
-        'start_index':    start_index,
-        'end_index':      end_index,
-        'total_filtered': total_filtered,
-        'total_main':     total_main,
-        'total_sub':      total_sub,
-    }
-    return render(request, 'main/staff/reports.html', context)
+@login_required
+@role_required('staff')
+def download_report_excel_staff(request):
+    query     = request.GET.get('q', '')
+    date_from = request.GET.get('date_from', '')
+    date_to   = request.GET.get('date_to', '')
+    return _generate_report_excel_response(query, date_from, date_to)
 
 
 # ======================================================
@@ -1143,176 +858,15 @@ def dashboard_management(request):
 @login_required
 @role_required('management')
 def management_reports(request):
-    query       = request.GET.get('q', '')
-    date_from   = request.GET.get('date_from', '')
-    date_to     = request.GET.get('date_to', '')
-    page_number = request.GET.get('page', 1)
-    per_page    = int(request.GET.get('per_page', 10))
-    if per_page not in [10, 25, 50, 100]:
-        per_page = 10
-
-    published_syncs = SyncLog.objects.filter(status='published').values_list('id', flat=True)
-    qs = RawTicket.objects.filter(
-        sync_log__in=published_syncs, parent_key__isnull=False
-    ).order_by('ticket_key')
-
-    if query:
-        qs = qs.filter(
-            Q(ticket_key__icontains=query) |
-            Q(platform__icontains=query)   |
-            Q(predefined_process__icontains=query)
-        )
-    if date_from:
-        qs = qs.filter(start_date__gte=date_from)
-    if date_to:
-        qs = qs.filter(start_date__lte=date_to)
-
-    seen, unique_ids = set(), []
-    for t in qs.values('id', 'ticket_key'):
-        if t['ticket_key'] not in seen:
-            seen.add(t['ticket_key'])
-            unique_ids.append(t['id'])
-    qs = RawTicket.objects.filter(id__in=unique_ids).order_by('ticket_key')
-
-    total_main     = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=True).count()
-    total_sub      = RawTicket.objects.filter(sync_log__in=published_syncs, parent_key__isnull=False).count()
-    total_filtered = qs.count()
-
-    paginator   = Paginator(qs, per_page)
-    page_obj    = paginator.get_page(page_number)
-    start_index = (page_obj.number - 1) * per_page + 1
-    end_index   = min(page_obj.number * per_page, total_filtered)
-
-    data = []
-    for t in page_obj.object_list:
-        item = {
-            'ticket_key':         t.ticket_key,
-            'parent_key':         t.parent_key,
-            'platform':           t.platform,
-            'package_name':       t.package_name,
-            'predefined_process': t.predefined_process,
-            'status':             t.status,
-            'start_date':         t.start_date,
-            'due_date':           t.due_date,
-            'cycle_time':         t.cycle_time,
-            'has_ct':             t.cycle_time is not None,
-        }
-        data.append(enrich_ticket(item))
-
-    context = {
-        'data':           data,
-        'query':          query,
-        'date_from':      date_from,
-        'date_to':        date_to,
-        'per_page':       per_page,
-        'page_obj':       page_obj,
-        'paginator':      paginator,
-        'page_range':     get_page_range(page_obj.number, paginator.num_pages),
-        'start_index':    start_index,
-        'end_index':      end_index,
-        'total_filtered': total_filtered,
-        'total_main':     total_main,
-        'total_sub':      total_sub,
-    }
-    return render(request, 'main/management/reports.html', context)
+    return _reports_view(request, 'main/management/reports.html')
 
 
 # ======================================================
 # CHART API
 # ======================================================
-from django.db.models import Avg, Count, F
-
 @login_required
 def chart_data_api(request):
-    from main.process_groups import get_process_info
-    published = get_published_syncs()
-
-    qs = RawTicket.objects.filter(
-        parent_key__isnull=False,
-        cycle_time__isnull=False,
-        platform__isnull=False,
-        sync_log__in=published,
-    ).exclude(platform='')
-
-    ct_per_platform = (
-        qs.values('platform')
-          .annotate(avg_ct=Avg('cycle_time'), count=Count('id'))
-          .order_by('platform')
-    )
-    chart1 = {'labels': [], 'data': [], 'counts': []}
-    for row in ct_per_platform:
-        chart1['labels'].append(row['platform'])
-        chart1['data'].append(round(row['avg_ct'], 2))
-        chart1['counts'].append(row['count'])
-
-    from django.db.models.functions import ExtractYear
-    ct_per_platform_year = (
-        qs.annotate(year=ExtractYear('start_date'))
-          .filter(year__isnull=False)
-          .values('platform', 'year')
-          .annotate(avg_ct=Avg('cycle_time'))
-          .order_by('platform', 'year')
-    )
-    platform_year_map = {}
-    years_set = set()
-    for row in ct_per_platform_year:
-        p = row['platform']; y = str(row['year'])
-        years_set.add(y)
-        if p not in platform_year_map: platform_year_map[p] = {}
-        platform_year_map[p][y] = round(row['avg_ct'], 2)
-
-    years_sorted = sorted(years_set)
-    platforms    = sorted(platform_year_map.keys())
-    COLORS = [
-        '#2563eb','#16a34a','#dc2626','#d97706','#7c3aed','#0891b2',
-        '#be185d','#059669','#ea580c','#4338ca','#0d9488','#b45309','#6d28d9',
-    ]
-    chart2_datasets = []
-    for i, platform in enumerate(platforms):
-        chart2_datasets.append({
-            'label':           platform,
-            'data':            [platform_year_map[platform].get(y) for y in years_sorted],
-            'borderColor':     COLORS[i % len(COLORS)],
-            'backgroundColor': COLORS[i % len(COLORS)] + '33',
-            'tension':         0.3,
-            'fill':            False,
-        })
-    chart2 = {'labels': years_sorted, 'datasets': chart2_datasets}
-
-    ct_per_process_platform = (
-        qs.filter(predefined_process__isnull=False)
-          .exclude(predefined_process='')
-          .values('platform', 'predefined_process')
-          .annotate(avg_ct=Avg('cycle_time'))
-          .order_by('platform', 'predefined_process')
-    )
-    process_platform_map = {}
-    for row in ct_per_process_platform:
-        p = row['platform']; pr = row['predefined_process']
-        if p not in process_platform_map: process_platform_map[p] = {}
-        process_platform_map[p][pr] = round(row['avg_ct'], 2)
-
-    chart3 = {'platforms': sorted(process_platform_map.keys()), 'data': process_platform_map}
-
-    estimasi_data = {}
-    for row in ct_per_process_platform:
-        p = row['platform']; pr = row['predefined_process']
-        if p not in estimasi_data: estimasi_data[p] = {}
-        estimasi_data[p][pr] = round(row['avg_ct'], 2)
-
-    all_processes = sorted(list(
-        RawTicket.objects.filter(predefined_process__isnull=False)
-        .exclude(predefined_process='')
-        .values_list('predefined_process', flat=True).distinct()
-    ))
-    all_platforms = sorted(list(
-        RawTicket.objects.filter(platform__isnull=False)
-        .exclude(platform='')
-        .values_list('platform', flat=True).distinct()
-    ))
-    chart4 = {'estimasi_data': estimasi_data, 'all_processes': all_processes, 'all_platforms': all_platforms}
-
-    return JsonResponse({'chart1': chart1, 'chart2': chart2, 'chart3': chart3, 'chart4': chart4})
+    return JsonResponse(get_chart_data())
 
 
 # ======================================================
@@ -1320,232 +874,47 @@ def chart_data_api(request):
 # ======================================================
 @login_required
 def ct_analysis_dashboard(request):
-    from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
-    published = get_published_syncs()
-
-    months_qs = RawTicket.objects.filter(
-        parent_key__isnull=False,
-        start_date__isnull=False,
-        cycle_time__isnull=False,
-        sync_log__in=published,
-    ).dates('start_date', 'month')
-
-    context = {
-        'all_months':    sorted(set(f"{d.year}-{str(d.month).zfill(2)}" for d in months_qs)),
-        'all_platforms': sorted(set(PACKAGE_PLATFORM.values())),
-        'all_stages':    sorted(set(v[0] for v in PROCESS_GROUP.values())),
-        'all_areas':     sorted(set(v[1] for v in PROCESS_GROUP.values())),
-        'all_processes': sorted(set(PROCESS_GROUP.keys())),
-    }
+    context = get_ct_analysis_filter_options()
     return render(request, 'main/partials/ct_analysis.html', context)
 
 
 @login_required
 def ct_analysis_data(request):
-    from main.process_groups import PROCESS_GROUP, PACKAGE_PLATFORM
-    from collections import defaultdict
-    published = get_published_syncs()
- 
     f_year      = request.GET.get('year', '').strip()
     f_platforms = request.GET.getlist('platform')
     f_stages    = request.GET.getlist('stage')
     f_areas     = request.GET.getlist('area')
     f_processes = request.GET.getlist('process')
- 
-    qs = RawTicket.objects.filter(
-        parent_key__isnull=False,
-        cycle_time__isnull=False,
-        start_date__isnull=False,
-        sync_log__in=published,
-    ).exclude(predefined_process__isnull=True).exclude(predefined_process='') \
-     .exclude(platform__isnull=True).exclude(platform='')
- 
-    force_monthly = False
-    if f_year:
-        try:
-            qs = qs.filter(start_date__year=int(f_year))
-            force_monthly = True
-        except ValueError:
-            pass
-    if f_processes:
-        qs = qs.filter(predefined_process__in=f_processes)
- 
-    rows          = qs.values('platform', 'predefined_process', 'cycle_time', 'quantity', 'start_date')
-    _VALID_GROUPS = set(PACKAGE_PLATFORM.values())
- 
-    enriched = []
-    for r in rows:
-        proc        = r['predefined_process']
-        plat        = r['platform']
-        stage, area = PROCESS_GROUP.get(proc, ('Other', 'Other'))
-        pg          = plat if plat in _VALID_GROUPS else 'Other'
- 
-        if f_platforms and pg    not in f_platforms: continue
-        if f_stages    and stage not in f_stages:    continue
-        if f_areas     and area  not in f_areas:     continue
- 
-        sd     = r['start_date']
-        ct_raw = float(r['cycle_time'])
-        qty    = r['quantity']
- 
-        enriched.append({
-            'pg':     pg,
-            'proc':   proc,
-            'stage':  stage,
-            'area':   area,
-            'ct_raw': ct_raw,
-            'qty':    qty or 0,
-            'year':   str(sd.year),
-            'month':  f"{sd.year}-{str(sd.month).zfill(2)}",
-        })
- 
-    all_years_db = sorted(set(
-        str(d.year) for d in RawTicket.objects.filter(
-            parent_key__isnull=False, start_date__isnull=False,
-        ).dates('start_date', 'year')
-    ))
- 
-    if not enriched:
-        return JsonResponse({
-            'col_keys': [], 'col_mode': {}, 'months': [],
-            'platform_groups': [], 'all_years': all_years_db,
-            'all_areas': [], 'all_processes': [],
-            'pivot1': {}, 'pivot2': {}, 'pivot_proposal': {},
-            'chart': {'labels': [], 'datasets': []},
-        })
- 
-    if force_monthly:
-        col_keys = sorted(set(r['month'] for r in enriched))
-        col_mode = {ck: 'monthly' for ck in col_keys}
+
+    data = compute_ct_analysis(f_year, f_platforms, f_stages, f_areas, f_processes)
+    return JsonResponse(data)
+
+
+@login_required
+def download_dashboard_pdf(request):
+    if request.user.role not in ('admin', 'staff', 'management'):
+        return HttpResponseForbidden("Akses ditolak.")
+    if request.method == 'POST':
+        # Frontend kirim data hasil compute sebelumnya sebagai JSON
+        payload  = json.loads(request.body)
+        data     = payload.get('data', {})
+        filters  = payload.get('filters', {})
     else:
-        col_keys = sorted(set(r['year'] for r in enriched))
-        col_mode = {ck: 'yearly' for ck in col_keys}
- 
-    def gcol(r):
-        return r['month'] if force_monthly else r['year']
- 
-    def median(vals):
-        if not vals:
-            return None
-        s   = sorted(vals)
-        n   = len(s)
-        mid = n // 2
-        return (s[mid - 1] + s[mid]) / 2 if n % 2 == 0 else float(s[mid])
- 
-    def r1(v):
-        return round(v, 1) if v is not None else None
- 
-    # ── Pivot 1: CT per ORDER per bulan/tahun (ct_raw) ───────────────────
-    p1_raw = defaultdict(lambda: defaultdict(list))
-    for r in enriched:
-        p1_raw[(r['pg'], r['stage'], r['area'], r['proc'])][gcol(r)].append(r['ct_raw'])
- 
-    pivot1 = {}
-    for (pg, stage, area, proc), col_data in p1_raw.items():
-        pivot1.setdefault(pg, {}).setdefault(stage, {}).setdefault(area, {})
-        apc, av = {}, []
-        for ck in col_keys:
-            vals = col_data.get(ck, [])
-            if vals:
-                apc[ck] = r1(median(vals))
-                av.extend(vals)
-        apc['grand_total'] = r1(median(av))
-        pivot1[pg][stage][area][proc] = apc
- 
-    # ── Pivot 2: CT per ORDER per platform (ct_raw) ───────────────────────
-    pgs_in_data = sorted(set(r['pg'] for r in enriched))
-    p2_raw      = defaultdict(lambda: defaultdict(list))
-    for r in enriched:
-        p2_raw[(r['area'], r['proc'])][r['pg']].append(r['ct_raw'])
- 
-    pivot2 = {}
-    for (area, proc), pg_data in p2_raw.items():
-        pivot2.setdefault(area, {})
-        pga, av = {}, []
-        for pg in pgs_in_data:
-            vals = pg_data.get(pg, [])
-            if vals:
-                pga[pg]             = r1(median(vals))
-                pga[f'{pg}__count'] = len(vals)
-                av.extend(vals)
-        pga['grand_total'] = r1(median(av))
-        pga['grand_count'] = len(av)
-        pivot2[area][proc] = pga
- 
-    # ── Pivot Proposal: khusus CT Proposal ───────────────────────────────
-    # Struktur: { pg: { proc: { median_ct, median_qty, ct_per_unit, n, area } } }
-    # Formula di frontend: CT_estimasi = ct_per_unit x qty_baru
-    #                      ct_per_unit = median_ct / median_qty
-    pp_raw = defaultdict(lambda: defaultdict(lambda: {'ct_vals': [], 'qty_vals': [], 'area': ''}))
-    for r in enriched:
-        pp_raw[r['pg']][r['proc']]['ct_vals'].append(r['ct_raw'])
-        pp_raw[r['pg']][r['proc']]['area'] = r['area']
-        if r['qty'] and r['qty'] > 0:
-            pp_raw[r['pg']][r['proc']]['qty_vals'].append(r['qty'])
- 
-    pivot_proposal = {}
-    for pg, procs in pp_raw.items():
-        pivot_proposal[pg] = {}
-        for proc, data in procs.items():
-            ct_vals  = data['ct_vals']
-            qty_vals = data['qty_vals']
-            med_ct   = median(ct_vals)
-            med_qty  = median(qty_vals) if qty_vals else None
- 
-            if med_qty and med_qty > 0:
-                ct_per_unit = round(med_ct / med_qty, 8)
-            else:
-                ct_per_unit = None
- 
-            pivot_proposal[pg][proc] = {
-                'median_ct':   round(med_ct, 4) if med_ct is not None else None,
-                'median_qty':  round(med_qty, 1) if med_qty is not None else None,
-                'ct_per_unit': ct_per_unit,
-                'n':           len(ct_vals),
-                'area':        data['area'],
-            }
- 
-    # ── Chart: avg CT per area per tahun/bulan (ct_raw) ──────────────────
-    AREA_COLORS = {
-        'Die Attach':        '#2563eb', 'Wire Bond':       '#16a34a',
-        'Molding':           '#dc2626', 'Trim & Form':     '#d97706',
-        'Marking':           '#7c3aed', 'Plating':         '#0891b2',
-        'Ball Mount':        '#be185d', 'Quality Control': '#059669',
-        'Testing':           '#ea580c', 'Reliability Test':'#4338ca',
-        'Packing':           '#0d9488', 'Shipment':        '#b45309',
-        'Wafer Preparation': '#6d28d9', 'Other':           '#9ca3af',
-    }
-    chart_raw = defaultdict(lambda: defaultdict(list))
-    for r in enriched:
-        chart_raw[r['area']][gcol(r)].append(r['ct_raw'])
- 
-    datasets = []
-    for area in sorted(chart_raw.keys()):
-        pts = [
-            r1(median(chart_raw[area].get(ck, []))) or 0
-            for ck in col_keys
-        ]
-        nz = [x for x in pts if x]
-        pts.append(r1(median(nz)) if nz else 0)
-        datasets.append({
-            'label':           area,
-            'data':            pts,
-            'backgroundColor': AREA_COLORS.get(area, '#9ca3af') + 'cc',
-            'borderColor':     AREA_COLORS.get(area, '#9ca3af'),
-            'borderWidth':     1,
-        })
- 
-    return JsonResponse({
-        'col_keys':        col_keys,
-        'col_mode':        col_mode,
-        'months':          col_keys,
-        'use_yearly':      not force_monthly,
-        'platform_groups': pgs_in_data,
-        'all_years':       all_years_db,
-        'all_areas':       sorted(pivot2.keys()),
-        'all_processes':   sorted(set(p for ad in pivot2.values() for p in ad.keys())),
-        'pivot1':          pivot1,
-        'pivot2':          pivot2,
-        'pivot_proposal':  pivot_proposal,
-        'chart':           {'labels': col_keys + ['Grand Total'], 'datasets': datasets},
-    })
+        # Fallback: GET tetap bisa dipakai
+        filters = {
+            'year':      request.GET.get('year', '').strip(),
+            'platforms': request.GET.getlist('platform'),
+            'stages':    request.GET.getlist('stage'),
+            'areas':     request.GET.getlist('area'),
+            'processes': request.GET.getlist('process'),
+        }
+        data = compute_ct_analysis(
+            filters['year'], filters['platforms'],
+            filters['stages'], filters['areas'], filters['processes'],
+        )
+
+    pdf_buffer = generate_pdf(data, filters)
+    filename   = f"ct-analysis-{datetime.now().strftime('%Y%m%d-%H%M')}.pdf"
+    response   = HttpResponse(pdf_buffer, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response

@@ -64,6 +64,8 @@ class JiraIssueListView(View):
     def get(self, request):
         qs = JiraMainTicket.objects.all()
 
+        if issue_keys := request.GET.getlist('issue_key'):
+            qs = qs.filter(issue_key__in=issue_keys)
         if status := request.GET.get('status'):
             qs = qs.filter(status=status)
         if package := request.GET.get('package'):

@@ -29,8 +29,11 @@ urlpatterns = [
 
     # ── Admin: Reports ────────────────────────────────────────────────────────
     path('dashboard/admin/reports/',                 views.admin_reports,         name='admin_reports'),
-    path('dashboard/admin/reports/download/',        views.download_report,        name='download_report'),
     path('dashboard/admin/reports/download/excel/',  views.download_report_excel,  name='download_report_excel'),
+
+    # Excel downloads for other roles (reuse same generator)
+    path('dashboard/staff/reports/download/excel/', views.download_report_excel_staff, name='download_report_excel_staff'),
+    path('dashboard/management/reports/download/excel/', views.download_report_excel_management, name='download_report_excel_management'),
 
     # ── Staff ─────────────────────────────────────────────────────────────────
     path('dashboard/staff/view-data/', views.staff_view_data, name='staff_view_data'),
@@ -46,5 +49,7 @@ urlpatterns = [
     # FIX: ct_analysis_dashboard ada di views.py tapi TIDAK ADA URL-nya.
     # Tanpa URL ini, fungsi tersebut tidak dapat diakses sama sekali.
     path('dashboard/ct-analysis/',       views.ct_analysis_dashboard, name='ct_analysis_dashboard'),
+    path('dashboard/ct-analysis/download/pdf/', views.download_dashboard_pdf, name='download_dashboard_pdf'),
+    # convenience routes so staff/management dashboards can call the same PDF generator
     path('dashboard/ct-analysis/data/',  views.ct_analysis_data,      name='ct_analysis_data'),
 ]

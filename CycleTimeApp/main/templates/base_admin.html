@@ -73,5 +73,102 @@
 
 </div>
 
+<script>
+(function(){
+    function _fillSel(id, items, keepVal) {
+        var sel = document.getElementById(id);
+        if (!sel) return;
+        var prev = keepVal ? sel.value : '';
+        while (sel.options.length > 1) sel.remove(1);
+        (items || []).forEach(function(v) {
+            var o = document.createElement('option');
+            o.value = v; o.textContent = v; sel.appendChild(o);
+        });
+        if (prev) sel.value = prev;
+    }
+
+    window.ctFillFilterDropdowns = function(data) {
+        _fillSel('ct_fp_single', data.platform_groups || [], true);
+        _fillSel('ct_fa_single', data.all_areas       || [], true);
+        _fillSel('ct_fpr_single', data.all_processes   || [], true);
+    };
+
+    window.ctApplySingle = function() {
+        var p = new URLSearchParams();
+        var g  = function(id) { var e = document.getElementById(id); return e ? e.value : ''; };
+        var gm = function(id) { var e = document.getElementById(id); return e ? Array.from(e.selectedOptions).map(function(o){return o.value;}).filter(function(v){return v;}) : []; };
+        if (g('ct_fy'))         p.append('year',     g('ct_fy'));
+        if (g('ct_fp_single'))  p.append('platform', g('ct_fp_single'));
+        if (g('ct_fs_single'))  p.append('stage',    g('ct_fs_single'));
+        if (g('ct_fa_single'))  p.append('area',     g('ct_fa_single'));
+        if (g('ct_fpr_single')) p.append('process',  g('ct_fpr_single'));
+        gm('ct_fp').forEach(function(v){p.append('platform',v);});
+        gm('ct_fs').forEach(function(v){p.append('stage',v);});
+        gm('ct_fa').forEach(function(v){p.append('area',v);});
+        gm('ct_fpr').forEach(function(v){p.append('process',v);});
+        if (typeof window.ctFetch === 'function') window.ctFetch(p);
+    };
+
+    window.ctResetSingle = function() {
+        ['ct_fy','ct_fp_single','ct_fs_single','ct_fa_single','ct_fpr_single'].forEach(function(id) {
+            var e = document.getElementById(id); if (e) e.value = '';
+        });
+        ['ct_fm','ct_fp','ct_fs','ct_fa','ct_fpr'].forEach(function(id) {
+            var e = document.getElementById(id); if(e) Array.from(e.options).forEach(function(o){o.selected=false;});
+        });
+        if (typeof window.ctFetch === 'function') window.ctFetch(new URLSearchParams());
+    };
+
+    window.buildLegend = function(pgs, fullData) {
+        if (typeof window.ctFillFilterDropdowns === 'function') {
+            window.ctFillFilterDropdowns({
+                platform_groups: pgs,
+                all_areas:       fullData ? fullData.all_areas    || [] : [],
+                all_processes:   fullData ? fullData.all_processes|| [] : [],
+            });
+        }
+        var colors = typeof PG_COLORS !== 'undefined' ? PG_COLORS : (typeof PG_C !== 'undefined' ? PG_C : {});
+        var el = document.getElementById('ctLegend');
+        if (!el) return;
+        var h = '<span class="font-semibold text-gray-700 mr-1">Platform Grouped</span>';
+        (pgs||[]).forEach(function(pg){
+            var c = colors[pg] || '#9ca3af';
+            h += '<span class="flex items-center gap-2 text-gray-700 mr-2"><span class="w-3 h-3 rounded-sm inline-block" style="background:' + c + '"></span>' + pg + '</span>';
+        });
+        el.innerHTML = h;
+    };
+
+    function gsel(id) {
+        var el = document.getElementById(id);
+        return el ? Array.from(el.selectedOptions).map(function(o){return o.value;}).filter(function(v){return v;}) : [];
+    }
+
+    window.ctApply = function() {
+        var p = new URLSearchParams();
+        var fy = document.getElementById('ct_fy'); if (fy && fy.value) p.append('year', fy.value);
+        gsel('ct_fm').forEach(function(v){p.append('month', v);});
+        gsel('ct_fp').forEach(function(v){p.append('platform', v);});
+        gsel('ct_fs').forEach(function(v){p.append('stage', v);});
+        gsel('ct_fa').forEach(function(v){p.append('area', v);});
+        gsel('ct_fpr').forEach(function(v){p.append('process', v);});
+        var fps = document.getElementById('ct_fp_single'); if (fps && fps.value) p.append('platform', fps.value);
+        var fss = document.getElementById('ct_fs_single'); if (fss && fss.value) p.append('stage', fss.value);
+        var fas = document.getElementById('ct_fa_single'); if (fas && fas.value) p.append('area', fas.value);
+        var fprs = document.getElementById('ct_fpr_single'); if (fprs && fprs.value) p.append('process', fprs.value);
+        if (typeof window.ctFetch === 'function') window.ctFetch(p);
+    };
+
+    window.ctReset = function() {
+        ['ct_fm','ct_fp','ct_fs','ct_fa','ct_fpr'].forEach(function(id){
+            var el = document.getElementById(id); if (el) Array.from(el.options).forEach(function(o){o.selected = false;});
+        });
+        ['ct_fy','ct_fp_single','ct_fs_single','ct_fa_single','ct_fpr_single'].forEach(function(id){
+            var el = document.getElementById(id); if (el) el.value = '';
+        });
+        if (typeof window.ctFetch === 'function') window.ctFetch(new URLSearchParams());
+    };
+})();
+</script>
+
 </body>
 </html>
