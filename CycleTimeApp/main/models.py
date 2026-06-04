@@ -45,28 +45,19 @@ class SyncLog(models.Model):
 # RAW TICKETS (DATA UTAMA)
 # ======================
 class RawTicket(models.Model):
-    ticket_key = models.CharField(max_length=50, unique=True)
-    parent_key = models.CharField(max_length=50, null=True, blank=True)
-
-    platform   = models.CharField(max_length=50)
-    summary    = models.TextField()
-
-    assignee = models.CharField(max_length=100, null=True, blank=True)
-    status   = models.CharField(max_length=50)
-
-    start_date    = models.DateField(null=True, blank=True)
-    resolved_date = models.DateField(null=True, blank=True)
-    due_date      = models.DateField(null=True, blank=True)
-
-    cycle_time = models.FloatField(null=True, blank=True)
+    ticket_key          = models.CharField(max_length=50, unique=True)
+    parent_key          = models.CharField(max_length=50, null=True, blank=True)
+    platform            = models.CharField(max_length=50)
+    status              = models.CharField(max_length=50)
+    start_date          = models.DateField(null=True, blank=True)
+    due_date            = models.DateField(null=True, blank=True)
+    cycle_time          = models.FloatField(null=True, blank=True)
+    quantity            = models.IntegerField(null=True, blank=True)  # jumlah unit dari main ticket
+    package_name        = models.CharField(max_length=100, null=True, blank=True)
+    predefined_process  = models.CharField(max_length=100, null=True, blank=True)
+    sync_log            = models.ForeignKey(SyncLog, on_delete=models.SET_NULL, null=True)
+    summary             = models.TextField()
     
-    
-    quantity           = models.IntegerField(null=True, blank=True)  # jumlah unit dari main ticket
-    package_name       = models.CharField(max_length=100, null=True, blank=True)
-    predefined_process = models.CharField(max_length=100, null=True, blank=True)
-
-    sync_log = models.ForeignKey(SyncLog, on_delete=models.SET_NULL, null=True)
-
     def __str__(self):
         return self.ticket_key
 

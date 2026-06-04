@@ -23,13 +23,19 @@ MONTH_NAMES = {
 # AUTH
 # ======================================================
 
-def role_required(role_name):
+def role_required(*allowed_roles):
+    """Decorator untuk restrict view access berdasarkan role.
+    
+    Usage:
+        @role_required('admin')  # Single role
+        @role_required('admin', 'staff', 'management')  # Multiple roles
+    """
     def decorator(view_func):
         @wraps(view_func)
         def wrapper(request, *args, **kwargs):
             if not request.user.is_authenticated:
                 return redirect('login')
-            if request.user.role != role_name:
+            if request.user.role not in allowed_roles:
                 return HttpResponseForbidden("⛔ Anda tidak memiliki akses ke halaman ini")
             return view_func(request, *args, **kwargs)
         return wrapper

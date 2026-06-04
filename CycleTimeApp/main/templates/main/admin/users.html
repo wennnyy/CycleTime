@@ -66,11 +66,10 @@
                             Edit
                         </button>
 
-                        <a href="{% url 'delete_user' members.id %}"
-                           class="text-red-600 hover:underline"
-                           onclick="return confirm('Delete this user?')">
+                        <button onclick="openDeleteModal({{ members.id }}, '{{ members.username }}')"
+                                class="text-red-600 hover:underline">
                             Delete
-                        </a>
+                        </button>
                     </td>
                 </tr>
                 {% empty %}
@@ -168,5 +167,65 @@
     </div>
 </div>
 {% endfor %}
+
+
+<!-- ================= DELETE MODAL ================= -->
+<div id="deleteModal" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+    <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+        <h3 class="text-lg font-bold mb-2 text-red-600">Delete User</h3>
+        <p class="text-gray-600 mb-4">
+            Are you sure you want to delete user <strong id="deleteUsername"></strong>?
+        </p>
+        <p class="text-sm text-gray-500 mb-4">
+            This action cannot be undone.
+        </p>
+
+        <form method="POST" id="deleteForm" class="space-y-3">
+            {% csrf_token %}
+            <input type="hidden" name="user_id" id="deleteUserId">
+
+            <div class="flex justify-end gap-2">
+                <button type="button"
+                        onclick="closeDeleteModal()"
+                        class="px-4 py-2 bg-gray-300 rounded">
+                    Cancel
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700">
+                    Delete User
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openDeleteModal(userId, username) {
+    document.getElementById('deleteUsername').textContent = username;
+    document.getElementById('deleteUserId').value = userId;
+    document.getElementById('deleteModal').classList.remove('hidden');
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteModal').classList.add('hidden');
+}
+
+// Handle delete form submission - POST to delete_user endpoint
+document.getElementById('deleteForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const userId = document.getElementById('deleteUserId').value;
+    // Change form action to delete_user URL with POST method
+    this.action = '/dashboard/admin/users/delete/' + userId + '/';
+    this.method = 'POST';
+    this.submit();
+});
+
+// Close modal when clicking outside
+document.getElementById('deleteModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeDeleteModal();
+    }
+});
+</script>
 
 {% endblock %}

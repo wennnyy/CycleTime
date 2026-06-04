@@ -6,6 +6,8 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # API Root documentation (also handled at root: http://127.0.0.1:8001/)
+    path('api/', views.ApiRootView.as_view(), name='api-root-alt'),
 
     # GET  /mock-jira/api/issues/
     # Ambil semua main ticket (support filter & pagination)
@@ -13,7 +15,7 @@ urlpatterns = [
 
     # GET  /mock-jira/api/issues/DEVSMETS-00001/
     # Detail 1 main ticket + semua sub ticket-nya
-    path('api/issues/<str:issue_key>/', views.JiraIssueDetailView.as_view(), name='jira-issue-detail'),
+     path('api/issues/<str:issue_key>/', views.JiraIssueDetailView.as_view(), name='jira-issue-detail'),
 
     # GET  /mock-jira/api/sub-issues/?parent_key=DEVSMETS-00001
     # Ambil sub ticket (support filter & pagination)
@@ -21,5 +23,6 @@ urlpatterns = [
 
     # POST /mock-jira/api/sync/
     # Tarik semua data (atau data baru sejak last_sync)
-    path('api/sync/', views.JiraSyncView.as_view(), name='jira-sync'),
+    path('api/sub-issues/range/', views.JiraSubIssueDateRangeView.as_view(), name='jira-sub-issues-range'),
+
 ]

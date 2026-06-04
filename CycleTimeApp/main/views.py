@@ -27,6 +27,7 @@ from main.services import (
     paginate_and_enrich_tickets,
     get_chart_data, compute_ct_analysis,
     get_ct_analysis_filter_options, generate_pdf,
+    get_jira_due_date_range,
 )
 
 import json
@@ -115,11 +116,12 @@ def admin_sync(request):
 
     # untuk membuat tampilan range tgl yang sudah ada di sistem.
     def get_data_range_str():
-        dr = RawTicket.objects.filter(start_date__isnull=False).aggregate(
-            earliest=Min('start_date'), latest=Max('start_date')
+        dr = RawTicket.objects.filter(due_date__isnull=False).aggregate(
+            earliest=Min('due_date'), latest=Max('due_date')
         )
         return format_date_range(dr['earliest'], dr['latest'])
-
+    
+    
     # ── POST ─────────────────────────────────────────────────────────────────
     if request.method == 'POST':
         action = request.POST.get('action')
@@ -135,17 +137,26 @@ def admin_sync(request):
                 if result.error_type == 'empty':
                     messages.warning(request,
                         "⚠️ Tidak ada sub-ticket Completed dalam range tanggal tersebut.")
-                elif result.total_skipped > 0 and result.total_processed == 0:
+
+                elif result.total_processed == 0 and result.total_skipped > 0:
+                    # Semua data dalam range ini sudah ada di database
+                    sub_text = f"{result.total_skipped_sub} sub-ticket" if result.total_skipped_sub > 0 else "data"
                     messages.warning(request,
-                        f"⚠️ Semua {result.total_skipped} ticket di range ini sudah ada di database. "
-                        f"Tidak ada data baru yang ditambahkan.")
-                elif result.total_skipped > 0:
+                        f"⚠️ Semua ticket dalam range tanggal ini sudah ada di database. "
+                        f"({sub_text} dilewati). Tidak ada data baru yang ditambahkan.")
+
+                elif result.total_processed > 0 and result.total_skipped > 0:
+                    # Sebagian baru, sebagian sudah ada
+                    processed_text = f"{result.total_processed_main} main + {result.total_processed_sub} sub-ticket"
                     messages.success(request,
-                        f"✅ Sync berhasil! {result.total_processed} ticket baru disimpan. "
-                        f"{result.total_skipped} ticket sudah ada di database (dilewati).")
+                        f"✅ Sync berhasil! {processed_text} baru disimpan. "
+                        f"⚠️ {result.total_skipped_sub} sub-ticket sudah ada di database (dilewati).")
+
                 else:
+                    # Semua data baru, tidak ada yang di-skip
+                    processed_text = f"{result.total_processed_main} main + {result.total_processed_sub} sub-ticket"
                     messages.success(request,
-                        f"✅ Sync berhasil! {result.total_processed} ticket baru disimpan.")
+                        f"✅ Sync berhasil! {processed_text} baru disimpan.")
             else:
                 if result.error_type == 'connection':
                     messages.error(request,
@@ -232,6 +243,7 @@ def admin_sync(request):
         per_page = 10
 
     last_sync     = SyncLog.objects.filter(status='success').order_by('-started_at').first()
+    last_any_sync = SyncLog.objects.order_by('-started_at').first()
     flagged_count = ErrorTicket.objects.count()
 
     sync_data      = []
@@ -293,11 +305,16 @@ def admin_sync(request):
             sync_data.append(enrich_ticket(item))
         page_range = get_page_range(page_obj.number, paginator.num_pages)
 
+    jira_range = get_jira_due_date_range()
+    jira_start = jira_range[0] if jira_range else None
+    jira_end   = jira_range[1] if jira_range else None
     context = {
         'start_date':      start_date,
         'end_date':        end_date,
         'total':           total,
         'data_range_str':  get_data_range_str(),
+        'jira_start':      jira_start,   
+        'jira_end':        jira_end,
         'error':           error,
         'last_sync':       last_sync,
         'sync_data':       sync_data,
@@ -314,6 +331,8 @@ def admin_sync(request):
         'clean_count':     total_all_raw - flagged_count,
         'has_unpublished': last_sync is not None,
         'has_published':   SyncLog.objects.filter(status='published').exists(),
+        'last_skipped':    last_any_sync is not None and last_any_sync.status == 'skipped',
+        'last_skipped_count': last_any_sync.total_skipped if last_any_sync and last_any_sync.status == 'skipped' else 0,
     }
     return render(request, 'main/admin/sync.html', context)
 
@@ -466,8 +485,9 @@ def edit_user(request, user_id):
 @login_required
 @role_required('admin')
 def delete_user(request, user_id):
-    User.objects.get(id=user_id).delete()
-    messages.success(request, "User berhasil dihapus")
+    if request.method == 'POST':
+        User.objects.get(id=user_id).delete()
+        messages.success(request, "User berhasil dihapus")
     return redirect('admin_users')
 
 
@@ -521,9 +541,16 @@ def admin_reports(request):
 
 
 @login_required
-@role_required('admin')
+@login_required
+@role_required('admin', 'staff', 'management')
 def download_report_excel(request):
-    # Delegate to shared generator so other roles can reuse it without duplication
+    """Generic Excel report downloader for all roles.
+    
+    Query params:
+    - q: search query
+    - date_from: start date filter (YYYY-MM-DD)
+    - date_to: end date filter (YYYY-MM-DD)
+    """
     query     = request.GET.get('q', '')
     date_from = request.GET.get('date_from', '')
     date_to   = request.GET.get('date_to', '')
@@ -774,12 +801,12 @@ def staff_view_data(request):
             sync_data.append(enrich_ticket(item))
         page_range = get_page_range(page_obj.number, paginator.num_pages)
 
-    # ── Data range string ─────────────────────────────────────
-    dr = RawTicket.objects.filter(start_date__isnull=False).aggregate(
-        earliest=Min('start_date'), latest=Max('start_date')
+   # ── Data range string ─────────────────────────────────────
+    dr = RawTicket.objects.filter(due_date__isnull=False).aggregate(
+        earliest=Min('due_date'), latest=Max('due_date')
     )
     data_range_str = format_date_range(dr['earliest'], dr['latest'])
-
+    
     total_all_sync  = RawTicket.objects.filter(
         parent_key__isnull=False, sync_log=last_sync
     ).count() if last_sync else 0
@@ -815,20 +842,7 @@ def staff_reports(request):
 
 @login_required
 @role_required('management')
-def download_report_excel_management(request):
-    query     = request.GET.get('q', '')
-    date_from = request.GET.get('date_from', '')
-    date_to   = request.GET.get('date_to', '')
-    return _generate_report_excel_response(query, date_from, date_to)
 
-
-@login_required
-@role_required('staff')
-def download_report_excel_staff(request):
-    query     = request.GET.get('q', '')
-    date_from = request.GET.get('date_from', '')
-    date_to   = request.GET.get('date_to', '')
-    return _generate_report_excel_response(query, date_from, date_to)
 
 
 # ======================================================

@@ -49,6 +49,7 @@ _TIMEOUT        = settings.MOCK_JIRA_TIMEOUT
 _PAGE_SIZE      = settings.MOCK_JIRA_PAGE_SIZE
 _URL_MAIN       = f"{_BASE_URL}/issues/"
 _URL_SUB        = f"{_BASE_URL}/sub-issues/"
+_URL_SUB_RANGE  = f"{_BASE_URL}/sub-issues/range/"
 _META_KEYS      = frozenset({'total', 'page', 'page_size', 'total_pages'})
 
 API_BATCH_SIZE  = 50    # HTTP request batching
@@ -160,6 +161,37 @@ def hitung_available_records(start_date, end_date):
         logger.warning(f"[available_records] HTTP query gagal: {e}")
         return 0, f"Tidak bisa menghitung records: {str(e)}"
 
+def get_jira_due_date_range():
+    """
+    Ambil earliest dan latest due_date dari sub-ticket
+    status=Completed di MockJiraServer via satu HTTP request.
+
+    Dipakai di admin_sync view untuk menampilkan rentang
+    data yang tersedia di Jira sebelum admin mulai sync.
+
+    Return: (date, date) | None
+    """
+    try:
+        resp = requests.get(_URL_SUB_RANGE, timeout=_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+
+        earliest_str = data.get('earliest_due_date')
+        latest_str   = data.get('latest_due_date')
+
+        if earliest_str and latest_str:
+            return (
+                datetime.strptime(earliest_str, '%Y-%m-%d').date(),
+                datetime.strptime(latest_str,   '%Y-%m-%d').date(),
+            )
+    except requests.exceptions.ConnectionError:
+        logger.warning("[get_jira_due_date_range] MockJira tidak bisa dijangkau.")
+    except requests.exceptions.Timeout:
+        logger.warning("[get_jira_due_date_range] Request ke MockJira timeout.")
+    except Exception as e:
+        logger.warning(f"[get_jira_due_date_range] Error: {e}")
+
+    return None
 
 # ======================================================
 # SERVICE: SYNC JIRA DATA
@@ -168,20 +200,26 @@ def hitung_available_records(start_date, end_date):
 class SyncResult:
     """
     Attributes:
-        success         : True jika sync selesai tanpa exception fatal
-        total_fetched   : jumlah sub-ticket yang diambil dari API
-        total_processed : jumlah ticket BARU yang berhasil di-insert ke DB
-        total_skipped   : jumlah ticket yang di-skip karena sudah ada di DB
-        error_type      : 'connection' | 'timeout' | 'empty' | 'unknown' | None
-        error_detail    : pesan error mentah
+        success              : True jika sync selesai tanpa exception fatal
+        total_fetched        : jumlah sub-ticket yang diambil dari API
+        total_processed      : jumlah ticket BARU yang berhasil di-insert ke DB (main + sub)
+        total_processed_main : jumlah main ticket BARU yang di-insert
+        total_processed_sub  : jumlah sub-ticket BARU yang di-insert
+        total_skipped        : jumlah ticket yang di-skip karena sudah ada di DB
+        total_skipped_sub    : jumlah sub-ticket yang di-skip (sudah ada di DB)
+        error_type           : 'connection' | 'timeout' | 'empty' | 'unknown' | None
+        error_detail         : pesan error mentah
     """
     def __init__(self):
-        self.success         = False
-        self.total_fetched   = 0
-        self.total_processed = 0
-        self.total_skipped   = 0
-        self.error_type      = None
-        self.error_detail    = None
+        self.success              = False
+        self.total_fetched        = 0
+        self.total_processed      = 0
+        self.total_processed_main = 0
+        self.total_processed_sub  = 0
+        self.total_skipped        = 0
+        self.total_skipped_sub    = 0
+        self.error_type           = None
+        self.error_detail         = None
 
 
 def _build_main_objects(main_map, sync_log):
@@ -225,7 +263,6 @@ def _build_sub_objects(all_sub, main_map, sync_log):
             summary            = f"{proc} - {parent_key}" if proc and parent_key else sub['key'],
             status             = status_raw.get('name', '') if isinstance(status_raw, dict) else status_raw,
             start_date         = sf.get('start_date') or None,
-            resolved_date      = sf.get('resolved_date') or None,
             due_date           = sf.get('due_date') or None,
             cycle_time         = hitung_cycle_time(sf.get('start_date'), sf.get('due_date')),
             quantity           = pf.get('quantity') or None,  # CT per unit dihitung di views.py
@@ -286,23 +323,38 @@ def sync_jira_data(user, start_date, end_date):
                 logger.warning(f"[Sync #{sync_log.id}] Gagal fetch main issues via API: {e}")
 
         # ── Step 3: Bangun objek RawTicket ────────────────────────────────
-        all_objects = (
-            _build_main_objects(main_map, sync_log) +
-            _build_sub_objects(all_sub, main_map, sync_log)
-        )
+        main_objects = _build_main_objects(main_map, sync_log)
+        sub_objects  = _build_sub_objects(all_sub, main_map, sync_log)
+        all_objects  = main_objects + sub_objects
 
         # ── Step 4: Filter hanya ticket baru ──────────────────────────────
-        existing_keys        = set(
+        existing_keys = set(
             RawTicket.objects
             .filter(ticket_key__in=[o.ticket_key for o in all_objects])
             .values_list('ticket_key', flat=True)
         )
-        new_objects          = [o for o in all_objects if o.ticket_key not in existing_keys]
-        result.total_skipped = len(all_objects) - len(new_objects)
+        new_objects = [o for o in all_objects if o.ticket_key not in existing_keys]
 
+        # Hitung processed dan skipped untuk main dan sub ticket
+        main_keys_fetched = {o.ticket_key for o in main_objects}
+        sub_keys_fetched  = {o.ticket_key for o in sub_objects}
+        
+        main_keys_skipped = main_keys_fetched & existing_keys
+        sub_keys_skipped  = sub_keys_fetched & existing_keys
+        
+        result.total_skipped     = len(main_keys_skipped) + len(sub_keys_skipped)
+        result.total_skipped_sub = len(sub_keys_skipped)
+        
+        # Pisahkan main dan sub dari new_objects
+        main_new = [o for o in new_objects if o.parent_key is None]
+        sub_new  = [o for o in new_objects if o.parent_key is not None]
+        result.total_processed_main = len(main_new)
+        result.total_processed_sub  = len(sub_new)
+        
         logger.info(
             f"[Sync #{sync_log.id}] "
-            f"{len(new_objects)} baru akan di-insert, "
+            f"{len(new_objects)} baru akan di-insert "
+            f"({result.total_processed_main} main + {result.total_processed_sub} sub), "
             f"{result.total_skipped} sudah ada di DB (di-skip)"
         )
 
@@ -317,17 +369,26 @@ def sync_jira_data(user, start_date, end_date):
         result.total_processed = len(new_objects)
         logger.info(
             f"[Sync #{sync_log.id}] Done — "
-            f"{result.total_processed} ticket baru disimpan, "
+            f"{result.total_processed} ticket baru disimpan "
+            f"({result.total_processed_main} main + {result.total_processed_sub} sub), "
             f"{result.total_skipped} dilewati"
         )
 
         # ── Step 6: Update SyncLog ────────────────────────────────────────
+        # Jika semua di-skip (tidak ada ticket baru), status = 'skipped'
+        # agar tidak mengganggu last_sync yang sudah published
+        if result.total_processed == 0 and result.total_skipped > 0:
+            sync_status = 'skipped'
+            result.error_type = 'all_skipped'
+        else:
+            sync_status = 'success'
+
         sync_log.finished_at     = timezone.now()
         sync_log.total_fetched   = result.total_fetched
         sync_log.total_processed = result.total_processed
         sync_log.total_skipped   = result.total_skipped
         sync_log.total_errors    = 0
-        sync_log.status          = 'success'
+        sync_log.status          = sync_status
         sync_log.save()
         result.success = True
 

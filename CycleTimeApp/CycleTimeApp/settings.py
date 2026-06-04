@@ -111,7 +111,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Jakarta'
 
 USE_I18N = True
 
@@ -147,6 +147,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 #   python manage.py runserver 8001
 # ============================================================
 
-MOCK_JIRA_BASE_URL  = "http://localhost:8001/mock-jira/api"
+MOCK_JIRA_BASE_URL  = "http://127.0.0.1:8001/mock-jira/api"
 MOCK_JIRA_TIMEOUT   = 30   # detik
 MOCK_JIRA_PAGE_SIZE = 500  # item per halaman

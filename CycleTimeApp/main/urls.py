@@ -28,12 +28,13 @@ urlpatterns = [
     path('dashboard/admin/users/delete/<int:user_id>/', views.delete_user, name='delete_user'),
 
     # ── Admin: Reports ────────────────────────────────────────────────────────
-    path('dashboard/admin/reports/',                 views.admin_reports,         name='admin_reports'),
-    path('dashboard/admin/reports/download/excel/',  views.download_report_excel,  name='download_report_excel'),
+    path('dashboard/admin/reports/',                 views.admin_reports, name='admin_reports'),
+    path('dashboard/admin/reports/download/excel/',  views.download_report_excel, name='download_report_excel'),
 
-    # Excel downloads for other roles (reuse same generator)
-    path('dashboard/staff/reports/download/excel/', views.download_report_excel_staff, name='download_report_excel_staff'),
-    path('dashboard/management/reports/download/excel/', views.download_report_excel_management, name='download_report_excel_management'),
+    # ── Excel Report Download (All Roles) ──────────────────────────────────────
+    # All roles use the same generic downloader with role-based access control
+    path('dashboard/staff/reports/download/excel/', views.download_report_excel, name='download_report_excel_staff'),
+    path('dashboard/management/reports/download/excel/', views.download_report_excel, name='download_report_excel_management'),
 
     # ── Staff ─────────────────────────────────────────────────────────────────
     path('dashboard/staff/view-data/', views.staff_view_data, name='staff_view_data'),
