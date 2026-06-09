@@ -12,66 +12,162 @@
 <div class="flex min-h-screen">
 
 <!-- Sidebar -->
-<div class="w-64 bg-green-800 text-white min-h-screen flex flex-col">
+<div id="sidebar" class="w-64 bg-green-800 text-white min-h-screen flex flex-col flex-shrink-0 transition-all duration-300" style="transition: width 0.3s, min-width 0.3s;">
 
-    <!-- Logo -->
-    <div class="p-5 border-b border-green-700">
-        <h2 class="text-lg font-bold">Cycle Time System</h2>
-        <p class="text-xs text-green-200">Infineon Batam</p>
+    <!-- Logo + Toggle Button -->
+    <div class="p-5 border-b border-green-700 flex items-center justify-between">
+        <div id="sidebarLogo">
+            <h2 class="text-lg font-bold whitespace-nowrap">Cycle Time System</h2>
+            <p class="text-xs text-green-200">Infineon Batam</p>
+        </div>
+        <button id="sidebarToggle" onclick="toggleSidebar()"
+            class="ml-2 flex-shrink-0 p-1.5 rounded-md hover:bg-green-700 transition text-white focus:outline-none"
+            title="Toggle Sidebar">
+            <svg id="iconOpen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7M18 19l-7-7 7-7"/>
+            </svg>
+            <svg id="iconClose" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M6 5l7 7-7 7"/>
+            </svg>
+        </button>
     </div>
 
     <!-- Menu -->
-    <div class="flex-1 p-4 space-y-2">
-
+    <div id="sidebarMenu" class="flex-1 p-4 space-y-2">
         <a href="{% url 'dashboard_admin' %}"
-           class="block px-4 py-2 rounded-lg hover:bg-gray-700
+           class="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-gray-700
            {% if request.path == '/dashboard/admin/' %}bg-black text-white{% endif %}">
-            Dashboard
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+            </svg>
+            <span class="sidebar-label whitespace-nowrap">Dashboard</span>
         </a>
 
         <a href="{% url 'admin_sync' %}"
-           class="block px-4 py-2 rounded-lg hover:bg-gray-700
+           class="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-gray-700
            {% if request.path == '/dashboard/admin/sync/' %}bg-black text-white{% endif %}">
-            Synchronization
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            <span class="sidebar-label whitespace-nowrap">Synchronization</span>
         </a>
 
         <a href="{% url 'admin_data' %}"
-           class="block px-4 py-2 rounded-lg hover:bg-gray-700
+           class="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-gray-700
            {% if request.path == '/dashboard/admin/data/' %}bg-black text-white{% endif %}">
-            Data Management
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+            </svg>
+            <span class="sidebar-label whitespace-nowrap">Data Management</span>
         </a>
 
         <a href="{% url 'admin_users' %}"
-           class="block px-4 py-2 rounded-lg hover:bg-gray-700
+           class="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-gray-700
            {% if request.path == '/dashboard/admin/users/' %}bg-black text-white{% endif %}">
-            User Management
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+            </svg>
+            <span class="sidebar-label whitespace-nowrap">User Management</span>
         </a>
 
         <a href="{% url 'admin_reports' %}"
-           class="block px-4 py-2 rounded-lg hover:bg-gray-700
+           class="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-gray-700
            {% if request.path == '/dashboard/admin/reports/' %}bg-black text-white{% endif %}">
-            Reports
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            <span class="sidebar-label whitespace-nowrap">Reports</span>
         </a>
-
     </div>
 
     <!-- User Info -->
-    <div class="p-4 border-t border-green-700 text-sm">
-        <p>Login sebagai:</p>
-        <p class="font-semibold">{{ request.user.username }}</p>
-        <p class="text-xs text-green-200 mb-2">{{ request.user.role }}</p>
-        <a href="{% url 'logout' %}" class="underline">Logout</a>
+    <div id="sidebarUser" class="p-4 border-t border-green-700 text-sm">
+        <div class="sidebar-label">
+            <p class="text-green-200 text-xs">Login sebagai:</p>
+            <p class="font-semibold">{{ request.user.username }}</p>
+            <p class="text-xs text-green-200 mb-2">{{ request.user.role }}</p>
+            <a href="{% url 'logout' %}" class="underline text-green-200 hover:text-white text-xs">Logout</a>
+        </div>
+        <div class="sidebar-icon-only hidden">
+            <a href="{% url 'logout' %}" title="Logout"
+               class="flex items-center justify-center p-1.5 rounded hover:bg-green-700 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                </svg>
+            </a>
+        </div>
     </div>
 
 </div>
 
     <!-- Main Content -->
-    <main class="flex-1 p-6 md:p-8">
+    <main id="mainContent" class="flex-1 p-6 md:p-8 min-w-0 overflow-x-hidden" style="width:calc(100vw - 16rem); transition: width 0.3s;">
         {% block content %}
         {% endblock %}
     </main>
 
 </div>
+
+<script>
+function toggleSidebar() {
+    const sidebar   = document.getElementById('sidebar');
+    const main      = document.getElementById('mainContent');
+    const logo      = document.getElementById('sidebarLogo');
+    const menu      = document.getElementById('sidebarMenu');
+    const iconOpen  = document.getElementById('iconOpen');
+    const iconClose = document.getElementById('iconClose');
+    const labels    = document.querySelectorAll('.sidebar-label');
+    const iconOnly  = document.querySelectorAll('.sidebar-icon-only');
+    const isCollapsed = sidebar.classList.contains('collapsed');
+
+    if (isCollapsed) {
+        // Expand
+        sidebar.classList.remove('collapsed');
+        sidebar.style.width = '16rem';
+        sidebar.style.minWidth = '16rem';
+        main.style.width = 'calc(100vw - 16rem)';
+        logo.classList.remove('hidden');
+        iconOpen.classList.remove('hidden');
+        iconClose.classList.add('hidden');
+        labels.forEach(el => el.classList.remove('hidden'));
+        iconOnly.forEach(el => el.classList.add('hidden'));
+        menu.classList.remove('flex', 'flex-col', 'items-center');
+        menu.querySelectorAll('a').forEach(a => {
+            a.classList.remove('justify-center');
+            a.classList.add('gap-3');
+        });
+        localStorage.setItem('sidebarCollapsed', '0');
+    } else {
+        // Collapse
+        sidebar.classList.add('collapsed');
+        sidebar.style.width = '4rem';
+        sidebar.style.minWidth = '4rem';
+        main.style.width = 'calc(100vw - 4rem)';
+        logo.classList.add('hidden');
+        iconOpen.classList.add('hidden');
+        iconClose.classList.remove('hidden');
+        labels.forEach(el => el.classList.add('hidden'));
+        iconOnly.forEach(el => el.classList.remove('hidden'));
+        menu.classList.add('flex', 'flex-col', 'items-center');
+        menu.querySelectorAll('a').forEach(a => {
+            a.classList.add('justify-center');
+            a.classList.remove('gap-3');
+        });
+        localStorage.setItem('sidebarCollapsed', '1');
+    }
+}
+
+// Restore state on page load
+document.addEventListener('DOMContentLoaded', function() {
+    if (localStorage.getItem('sidebarCollapsed') === '1') {
+        // Langsung collapse tanpa animasi saat load
+        const sidebar   = document.getElementById('sidebar');
+        sidebar.style.transition = 'none';
+        toggleSidebar();
+        setTimeout(() => { sidebar.style.transition = ''; }, 50);
+    }
+});
+</script>
 
 <script>
 (function(){

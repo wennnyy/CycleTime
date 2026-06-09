@@ -643,9 +643,27 @@ def _enrich_ct_rows(qs, f_platforms, f_stages, f_areas, force_monthly):
 
     return enriched
 
+# ── Pivot 1 helpers ────────────────────────────────────────────────────────────
+def _mean(vals):
+    """Rata-rata sederhana, return None jika kosong."""
+    v = [x for x in vals if x is not None]
+    return round(sum(v) / len(v), 1) if v else None
+
+def _sum_nonnull(vals):
+    """Jumlahkan nilai non-None, return None jika semua None."""
+    v = [x for x in vals if x is not None]
+    return round(sum(v), 1) if v else None
 
 def _build_pivot1(enriched, col_keys, force_monthly):
-    """Pivot: platform → stage → area → process → {col: median_ct}."""
+    """
+    Pivot: platform → stage → area → process → {col: avg_ct, grand_total: avg_ct}
+
+    Struktur tambahan yang dikirim ke frontend:
+        pivot[pg]['_stage_totals'][stage][col] = SUM avg proses di stage tsb
+        pivot[pg]['_stage_totals'][stage]['grand_total'] = SUM grand_total proses
+        pivot[pg]['_grand_total'][col] = SUM subtotal stage
+        pivot[pg]['_grand_total']['grand_total'] = SUM grand_total stage
+    """
     def gcol(r): return r['month'] if force_monthly else r['year']
 
     raw = defaultdict(lambda: defaultdict(list))
@@ -659,16 +677,83 @@ def _build_pivot1(enriched, col_keys, force_monthly):
         for ck in col_keys:
             vals = col_data.get(ck, [])
             if vals:
-                apc[ck] = round(median(vals), 1)
+                apc[ck] = round(sum(vals) / len(vals), 1)   # AVG per kolom
                 all_vals.extend(vals)
-        apc['grand_total'] = round(median(all_vals), 1) if all_vals else None
+        apc['grand_total'] = round(sum(all_vals) / len(all_vals), 1) if all_vals else None
         pivot[pg][stage][area][proc] = apc
+
+    # ── Hitung subtotal stage dan grand total platform ──────────────────
+    for pg in pivot:
+        stage_totals  = {}
+        pg_col_totals = {ck: 0.0 for ck in col_keys}
+        pg_gt_total   = 0.0
+        pg_col_has    = {ck: False for ck in col_keys}
+        pg_gt_has     = False
+
+        for stage in pivot[pg]:
+            if stage.startswith('_'):
+                continue
+            st_col_totals = {ck: 0.0 for ck in col_keys}
+            st_gt_total   = 0.0
+            st_col_has    = {ck: False for ck in col_keys}
+            st_gt_has     = False
+
+            for area in pivot[pg][stage]:
+                for proc in pivot[pg][stage][area]:
+                    d = pivot[pg][stage][area][proc]
+                    for ck in col_keys:
+                        v = d.get(ck)
+                        if v is not None:
+                            st_col_totals[ck] += v
+                            st_col_has[ck]     = True
+                    gt = d.get('grand_total')
+                    if gt is not None:
+                        st_gt_total += gt
+                        st_gt_has    = True
+
+            # Simpan subtotal stage
+            st_result = {}
+            for ck in col_keys:
+                st_result[ck] = round(st_col_totals[ck], 1) if st_col_has[ck] else None
+            st_result['grand_total'] = round(st_gt_total, 1) if st_gt_has else None
+            stage_totals[stage] = st_result
+
+            # Akumulasi ke platform grand total
+            for ck in col_keys:
+                if st_col_has[ck]:
+                    pg_col_totals[ck] += st_col_totals[ck]
+                    pg_col_has[ck]     = True
+            if st_gt_has:
+                pg_gt_total += st_gt_total
+                pg_gt_has    = True
+
+        # Simpan grand total platform
+        # Hitung count ticket per kolom per platform dari enriched
+        pg_count_per_col = {}
+        pg_count_total   = 0
+        for r in enriched:
+            if r['pg'] != pg:
+                continue
+            col_key = r['month'] if force_monthly else r['year']
+            pg_count_per_col[col_key] = pg_count_per_col.get(col_key, 0) + 1
+            pg_count_total += 1
+
+        # Simpan grand total platform
+        pg_result = {}
+        for ck in col_keys:
+            pg_result[ck] = round(pg_col_totals[ck], 1) if pg_col_has[ck] else None
+        pg_result['grand_total']  = round(pg_gt_total, 1) if pg_gt_has else None
+        pg_result['_count']       = pg_count_per_col
+        pg_result['_count_total'] = pg_count_total
+
+        pivot[pg]['_stage_totals'] = stage_totals
+        pivot[pg]['_grand_total']  = pg_result
 
     return pivot
 
 
 def _build_pivot2(enriched, pgs_in_data):
-    """Pivot: area → process → {platform: median_ct, count, grand_total}."""
+    """Pivot: area → process → {platform: avg_ct, count, grand_total, area_subtotal, grand_total_row}."""
     raw = defaultdict(lambda: defaultdict(list))
     for r in enriched:
         raw[(r['area'], r['proc'])][r['pg']].append(r['ct_raw'])
@@ -680,18 +765,55 @@ def _build_pivot2(enriched, pgs_in_data):
         for pg in pgs_in_data:
             vals = pg_data.get(pg, [])
             if vals:
-                pga[pg]             = round(median(vals), 1)
+                pga[pg]             = round(sum(vals) / len(vals), 1)
                 pga[f'{pg}__count'] = len(vals)
                 all_vals.extend(vals)
-        pga['grand_total'] = round(median(all_vals), 1) if all_vals else None
+        pga['grand_total'] = round(sum(all_vals) / len(all_vals), 1) if all_vals else None
         pga['grand_count'] = len(all_vals)
         pivot[area][proc]  = pga
+
+    # Hitung area subtotal dan grand total row — dikirim ke frontend
+    for area in pivot:
+        pg_area_vals = defaultdict(list)
+        all_area_vals = []
+        for proc in pivot[area]:
+            if proc.startswith('_'):
+                continue
+            for pg in pgs_in_data:
+                v = pivot[area][proc].get(pg)
+                if v is not None:
+                    pg_area_vals[pg].append(v)
+                    all_area_vals.append(v)
+        area_sub = {}
+        for pg in pgs_in_data:
+            vs = pg_area_vals[pg]
+            area_sub[pg] = round(sum(vs) / len(vs), 1) if vs else None
+        area_sub['grand_total'] = round(sum(all_area_vals) / len(all_area_vals), 1) if all_area_vals else None
+        pivot[area]['_subtotal'] = area_sub
+
+    # Grand total seluruh tabel
+    pg_all_vals = defaultdict(list)
+    all_grand_vals = []
+    for area in pivot:
+        for proc in pivot[area]:
+            if proc.startswith('_'):
+                continue
+            for pg in pgs_in_data:
+                v = pivot[area][proc].get(pg)
+                if v is not None:
+                    pg_all_vals[pg].append(v)
+                    all_grand_vals.append(v)
+    grand_row = {}
+    for pg in pgs_in_data:
+        vs = pg_all_vals[pg]
+        grand_row[pg] = round(sum(vs) / len(vs), 1) if vs else None
+    grand_row['grand_total'] = round(sum(all_grand_vals) / len(all_grand_vals), 1) if all_grand_vals else None
+    pivot['_grand_total'] = grand_row
 
     return pivot
 
 
 def _build_pivot_proposal(enriched):
-    """Pivot: platform → process → {median_ct, median_qty, ct_per_unit, n, area}."""
     raw = defaultdict(lambda: defaultdict(lambda: {'ct_vals': [], 'qty_vals': [], 'area': ''}))
     for r in enriched:
         raw[r['pg']][r['proc']]['ct_vals'].append(r['ct_raw'])
@@ -703,41 +825,84 @@ def _build_pivot_proposal(enriched):
     for pg, procs in raw.items():
         pivot[pg] = {}
         for proc, d in procs.items():
-            med_ct  = median(d['ct_vals'])
-            med_qty = median(d['qty_vals']) if d['qty_vals'] else None
+            ct_vals  = d['ct_vals']
+            qty_vals = d['qty_vals']
+
+            # Pasangkan qty dan ct — hanya ambil ct yang punya pasangan qty
+            pairs = list(zip(qty_vals, ct_vals[:len(qty_vals)]))
+
+            slope, intercept, use_regression, insufficient = None, None, False, False
+
+            if len(pairs) >= 2:
+                # Cukup data — hitung regresi linear
+                n      = len(pairs)
+                xs     = [p[0] for p in pairs]
+                ys     = [p[1] for p in pairs]
+                x_mean = sum(xs) / n
+                y_mean = sum(ys) / n
+                num    = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))
+                den    = sum((x - x_mean) ** 2 for x in xs)
+                if den > 0:
+                    slope          = round(num / den, 8)
+                    intercept      = round(y_mean - slope * x_mean, 4)
+                    use_regression = True
+                else:
+                    # Semua qty sama persis — regresi tidak bisa, insufficient
+                    insufficient = True
+            else:
+                # Kurang dari 2 pasangan data — insufficient
+                insufficient = True
+
             pivot[pg][proc] = {
-                'median_ct':   round(med_ct,  4) if med_ct  is not None else None,
-                'median_qty':  round(med_qty, 1) if med_qty is not None else None,
-                'ct_per_unit': round(med_ct / med_qty, 8) if med_qty else None,
-                'n':           len(d['ct_vals']),
-                'area':        d['area'],
+                'slope':          slope,
+                'intercept':      intercept,
+                'use_regression': use_regression,
+                'insufficient':   insufficient,
+                'n':              len(ct_vals),
+                'n_pairs':        len(pairs),
+                'area':           d['area'],
             }
 
     return pivot
 
 
 def _build_ct_chart(enriched, col_keys, force_monthly):
-    """Dataset chart per area."""
+    """Dataset chart per platform — avg CT dari _grand_total pivot1."""
     def gcol(r): return r['month'] if force_monthly else r['year']
 
-    raw = defaultdict(lambda: defaultdict(list))
+    # Kumpulkan data per platform per kolom
+    raw_pg = defaultdict(lambda: defaultdict(list))
+    raw_pg_count = defaultdict(lambda: defaultdict(int))
     for r in enriched:
-        raw[r['area']][gcol(r)].append(r['ct_raw'])
+        raw_pg[r['pg']][gcol(r)].append(r['ct_raw'])
+        raw_pg_count[r['pg']][gcol(r)] += 1
 
     datasets = []
-    for area in sorted(raw):
-        pts = [round(median(raw[area].get(ck, [])), 1) if raw[area].get(ck) else 0 for ck in col_keys]
-        nz  = [x for x in pts if x]
-        pts.append(round(median(nz), 1) if nz else 0)
+    pgs = sorted(raw_pg.keys())
+    for pg in pgs:
+        col_data  = raw_pg[pg]
+        pts       = []
+        counts    = []
+        for ck in col_keys:
+            vals = col_data.get(ck, [])
+            pts.append(round(sum(vals) / len(vals), 1) if vals else None)
+            counts.append(len(vals))
+        # Grand avg & grand count
+        all_vals = [v for vs in col_data.values() for v in vs]
+        pts.append(round(sum(all_vals) / len(all_vals), 1) if all_vals else None)
+        counts.append(len(all_vals))
+
+        color = _PG_COLORS.get(pg, _FALLBACK_COLORS[pgs.index(pg) % len(_FALLBACK_COLORS)])
         datasets.append({
-            'label':           area,
+            'label':           pg,
             'data':            pts,
-            'backgroundColor': _AREA_COLORS.get(area, '#9ca3af') + 'cc',
-            'borderColor':     _AREA_COLORS.get(area, '#9ca3af'),
+            'counts':          counts,
+            'backgroundColor': color + 'cc',
+            'borderColor':     color,
             'borderWidth':     1,
         })
 
-    return {'labels': col_keys + ['Grand Total'], 'datasets': datasets}
+    return {'labels': col_keys + ['Grand Avg'], 'datasets': datasets}
 
 
 # ======================================================
@@ -851,18 +1016,17 @@ def _pdf_build_chart(pivot1, platform_groups, col_keys, use_yearly):
 
     pg_col_vals = {pg: {ck: [] for ck in col_keys} for pg in platform_groups}
     pg_all_vals = {pg: [] for pg in platform_groups}
-
+    
+    #  ambil langsung dari _grand_total (baris biru pivot 1)
     for pg in platform_groups:
-        for stage_data in pivot1.get(pg, {}).values():
-            for area_data in stage_data.values():
-                for proc_data in area_data.values():
-                    for ck in col_keys:
-                        v = proc_data.get(ck)
-                        if v is not None:
-                            pg_col_vals[pg][ck].append(v)
-                    gt = proc_data.get('grand_total')
-                    if gt is not None:
-                        pg_all_vals[pg].append(gt)
+        pg_gt = pivot1.get(pg, {}).get('_grand_total', {})
+        for ck in col_keys:
+            v = pg_gt.get(ck)
+            if v is not None:
+                pg_col_vals[pg][ck].append(v)
+        gt = pg_gt.get('grand_total')
+        if gt is not None:
+            pg_all_vals[pg].append(gt)
 
     x_labels = [pdf_format_column_label(ck, use_yearly) for ck in col_keys] + ['Grand Avg']
     n_groups  = len(x_labels)
@@ -878,9 +1042,9 @@ def _pdf_build_chart(pivot1, platform_groups, col_keys, use_yearly):
 
     for i, pg in enumerate(platform_groups):
         color    = _PG_COLORS.get(pg, _FALLBACK_COLORS[i % len(_FALLBACK_COLORS)])
-        col_avgs = [pdf_average(pg_col_vals[pg][ck]) for ck in col_keys]
+        col_avgs = [pg_col_vals[pg][ck][0] if pg_col_vals[pg][ck] else None for ck in col_keys]
         g_vals   = pg_all_vals[pg]
-        col_avgs.append(pdf_round_1(sum(g_vals) / len(g_vals)) if g_vals else None)
+        col_avgs.append(g_vals[0] if g_vals else None)
 
         bar_vals = [v if v is not None else 0 for v in col_avgs]
         offset   = (i - n_pgs / 2 + 0.5) * bar_width
@@ -932,14 +1096,12 @@ def _pdf_build_pivot1_table(pivot1, col_keys, use_yearly, page_width, margin):
     row_idx  = 1
 
     for pg in sorted(pivot1):
-        pg_first  = True
-        pg_c_sum  = defaultdict(list)
-        pg_all    = []
+        pg_first     = True
+        stage_totals = pivot1[pg].get('_stage_totals', {})
+        pg_gt        = pivot1[pg].get('_grand_total', {})
 
-        for stage in sorted(pivot1[pg]):
+        for stage in sorted(s for s in pivot1[pg] if not s.startswith('_')):
             st_first = True
-            st_c_sum = defaultdict(list)
-            st_all   = []
 
             for area in sorted(pivot1[pg][stage]):
                 ar_first = True
@@ -947,29 +1109,23 @@ def _pdf_build_pivot1_table(pivot1, col_keys, use_yearly, page_width, margin):
                 for proc in sorted(pivot1[pg][stage][area]):
                     d = pivot1[pg][stage][area][proc]
                     row = [
-                        pg if pg_first else '',
+                        pg    if pg_first else '',
                         stage if st_first else '',
-                        area if ar_first else '',
+                        area  if ar_first else '',
                         proc,
                     ]
                     for ck in col_keys:
-                        v = d.get(ck)
-                        row.append(pdf_value_to_string(v))
-                        if v is not None:
-                            st_c_sum[ck].append(v)
-                            pg_c_sum[ck].append(v)
-                    gt = d.get('grand_total')
-                    row.append(pdf_value_to_string(gt))
-                    if gt is not None:
-                        st_all.append(gt); pg_all.append(gt)
+                        row.append(pdf_value_to_string(d.get(ck)))
+                    row.append(pdf_value_to_string(d.get('grand_total')))
                     rows.append(row)
                     pg_first = st_first = ar_first = False
                     row_idx += 1
 
-            # Subtotal stage
-            st_row = ['', f'Subtotal: {stage}', '', ''] + \
-                     [pdf_value_to_string(pdf_average(st_c_sum[ck])) for ck in col_keys] + \
-                     [pdf_value_to_string(pdf_round_1(sum(st_all) / len(st_all)) if st_all else None)]
+            # Subtotal stage — baca dari _stage_totals (sudah SUM di backend)
+            st = stage_totals.get(stage, {})
+            st_row = ['', f'Subtotal: {stage}', '', ''] \
+                   + [pdf_value_to_string(st.get(ck)) for ck in col_keys] \
+                   + [pdf_value_to_string(st.get('grand_total'))]
             rows.append(st_row)
             styles += [
                 ('BACKGROUND', (0, row_idx), (-1, row_idx), _TABLE_COLORS['subtot']),
@@ -978,10 +1134,10 @@ def _pdf_build_pivot1_table(pivot1, col_keys, use_yearly, page_width, margin):
             ]
             row_idx += 1
 
-        # Grand total platform
-        pg_row = [f'{pg}  (Total)', 'Grand Total', '', ''] + \
-                 [pdf_value_to_string(pdf_average(pg_c_sum[ck])) for ck in col_keys] + \
-                 [pdf_value_to_string(pdf_round_1(sum(pg_all) / len(pg_all)) if pg_all else None)]
+        # Grand total platform — baca dari _grand_total (sudah SUM di backend)
+        pg_row = [f'{pg}  (Total)', 'Grand Total', '', ''] \
+               + [pdf_value_to_string(pg_gt.get(ck)) for ck in col_keys] \
+               + [pdf_value_to_string(pg_gt.get('grand_total'))]
         rows.append(pg_row)
         styles += [
             ('BACKGROUND', (0, row_idx), (-1, row_idx), _TABLE_COLORS['gt_bg']),
@@ -1008,35 +1164,31 @@ def _pdf_build_pivot2_table(pivot2, platform_groups, page_width, margin):
     styles  = _pdf_base_table_styles()
     row_idx = 1
 
-    all_pg_sum = defaultdict(list)
-    all_total  = []
+    # Filter hanya area yang bukan key internal (_grand_total)
+    areas = sorted(k for k in pivot2 if not k.startswith('_'))
 
-    for area in sorted(pivot2):
-        ar_first  = True
-        ar_pg_sum = defaultdict(list)
-        ar_total  = []
+    for area in areas:
+        ar_first = True
+        # Filter hanya proses yang bukan key internal (_subtotal)
+        procs = sorted(k for k in pivot2[area] if not k.startswith('_'))
+        subtotal = pivot2[area].get('_subtotal', {})
 
-        for proc in sorted(pivot2[area]):
+        for proc in procs:
             d   = pivot2[area][proc]
             row = [area if ar_first else '', proc]
             for pg in platform_groups:
-                v = d.get(pg)
+                v = d.get(pg) if isinstance(d, dict) else None
                 row.append(pdf_value_to_string(v))
-                if v is not None:
-                    ar_pg_sum[pg].append(v)
-                    all_pg_sum[pg].append(v)
-            gt = d.get('grand_total')
+            gt = d.get('grand_total') if isinstance(d, dict) else None
             row.append(pdf_value_to_string(gt))
-            if gt is not None:
-                ar_total.append(gt); all_total.append(gt)
             rows.append(row)
             ar_first = False
             row_idx += 1
 
-        # Subtotal area
+        # Subtotal area — baca dari _subtotal backend
         ar_row = [f'Subtotal: {area}', ''] + \
-                 [pdf_value_to_string(pdf_average(ar_pg_sum[pg])) for pg in platform_groups] + \
-                 [pdf_value_to_string(pdf_round_1(sum(ar_total) / len(ar_total)) if ar_total else None)]
+                 [pdf_value_to_string(subtotal.get(pg)) for pg in platform_groups] + \
+                 [pdf_value_to_string(subtotal.get('grand_total'))]
         rows.append(ar_row)
         styles += [
             ('BACKGROUND', (0, row_idx), (-1, row_idx), _TABLE_COLORS['subtot']),
@@ -1045,10 +1197,11 @@ def _pdf_build_pivot2_table(pivot2, platform_groups, page_width, margin):
         ]
         row_idx += 1
 
-    # Grand total
+    # Grand total — baca dari _grand_total backend
+    grand_total = pivot2.get('_grand_total', {})
     gt_row = ['GRAND TOTAL', ''] + \
-             [pdf_value_to_string(pdf_average(all_pg_sum[pg])) for pg in platform_groups] + \
-             [pdf_value_to_string(pdf_round_1(sum(all_total) / len(all_total)) if all_total else None)]
+             [pdf_value_to_string(grand_total.get(pg)) for pg in platform_groups] + \
+             [pdf_value_to_string(grand_total.get('grand_total'))]
     rows.append(gt_row)
     styles += [
         ('BACKGROUND', (0, row_idx), (-1, row_idx), _TABLE_COLORS['gt_bg']),
