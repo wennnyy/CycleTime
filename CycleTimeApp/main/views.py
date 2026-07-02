@@ -230,7 +230,7 @@ def admin_sync(request):
     start_date = request.GET.get('start_date') or str(today.replace(day=1))
     end_date   = request.GET.get('end_date')   or str(today)
     
-    if request.GET.get('records_only') == '1':
+    if request.GET.get('records_only') == '1': #get jumlah records tersedia di date range
         total, _ = hitung_available_records(start_date, end_date)
         return JsonResponse({'total': total})
 
@@ -308,6 +308,12 @@ def admin_sync(request):
     jira_range = get_jira_due_date_range()
     jira_start = jira_range[0] if jira_range else None
     jira_end   = jira_range[1] if jira_range else None
+    
+    #untuk menampilkan 10 sync log terakhir di bawah tabel
+    recent_sync_logs = SyncLog.objects.select_related(
+    'admin'
+    ).order_by('-started_at')[:30]
+    
     context = {
         'start_date':      start_date,
         'end_date':        end_date,
@@ -333,6 +339,7 @@ def admin_sync(request):
         'has_published':   SyncLog.objects.filter(status='published').exists(),
         'last_skipped':    last_any_sync is not None and last_any_sync.status == 'skipped',
         'last_skipped_count': last_any_sync.total_skipped if last_any_sync and last_any_sync.status == 'skipped' else 0,
+        'recent_sync_logs': recent_sync_logs,
     }
     return render(request, 'main/admin/sync.html', context)
 

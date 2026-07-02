@@ -34,10 +34,7 @@ from main.process_groups import PACKAGE_PLATFORM, PROCESS_GROUP, enrich_ticket, 
 from main.utils         import (
     get_page_range,
     hitung_cycle_time,
-    median,
-    pdf_average,
     pdf_format_column_label,
-    pdf_round_1,
     pdf_value_to_string,
 )
 
@@ -47,9 +44,9 @@ logger = logging.getLogger(__name__)
 _BASE_URL       = settings.MOCK_JIRA_BASE_URL
 _TIMEOUT        = settings.MOCK_JIRA_TIMEOUT
 _PAGE_SIZE      = settings.MOCK_JIRA_PAGE_SIZE
-_URL_MAIN       = f"{_BASE_URL}/issues/"
+_URL_MAIN       = f"{_BASE_URL}/issues/"                # http://127.0.0.1:8001/mock-jira/api/issues/
 _URL_SUB        = f"{_BASE_URL}/sub-issues/"
-_URL_SUB_RANGE  = f"{_BASE_URL}/sub-issues/range/"
+_URL_SUB_RANGE  = f"{_BASE_URL}/sub-issues/range/"      #Mengetahui tanggal paling awal dan paling akhir data yang ada di JIRA
 _META_KEYS      = frozenset({'total', 'page', 'page_size', 'total_pages'})
 
 API_BATCH_SIZE  = 50    # HTTP request batching
@@ -74,15 +71,7 @@ _TABLE_COLORS = {
     'gt_val':   colors.HexColor('#1e40af'),
     'sub_val':  colors.HexColor('#0369a1'),
 }
-_AREA_COLORS = {
-    'Die Attach':        '#2563eb', 'Wire Bond':        '#16a34a',
-    'Molding':           '#dc2626', 'Trim & Form':      '#d97706',
-    'Marking':           '#7c3aed', 'Plating':          '#0891b2',
-    'Ball Mount':        '#be185d', 'Quality Control':  '#059669',
-    'Testing':           '#ea580c', 'Reliability Test': '#4338ca',
-    'Packing':           '#0d9488', 'Shipment':         '#b45309',
-    'Wafer Preparation': '#6d28d9', 'Other':            '#9ca3af',
-}
+
 _CHART_COLORS = [
     '#2563eb', '#16a34a', '#dc2626', '#d97706', '#7c3aed', '#0891b2',
     '#be185d', '#059669', '#ea580c', '#4338ca', '#0d9488', '#b45309', '#6d28d9',
@@ -135,7 +124,7 @@ def ambil_main_tickets_by_keys(issue_keys):
 
 
 # ======================================================
-# QUERY: HITUNG RECORDS TERSEDIA
+# QUERY: HITUNG Jumlah RECORDS TERSEDIA
 # ======================================================
 
 def hitung_available_records(start_date, end_date):
@@ -162,17 +151,9 @@ def hitung_available_records(start_date, end_date):
         return 0, f"Tidak bisa menghitung records: {str(e)}"
 
 def get_jira_due_date_range():
-    """
-    Ambil earliest dan latest due_date dari sub-ticket
-    status=Completed di MockJiraServer via satu HTTP request.
-
-    Dipakai di admin_sync view untuk menampilkan rentang
-    data yang tersedia di Jira sebelum admin mulai sync.
-
-    Return: (date, date) | None
-    """
+    
     try:
-        resp = requests.get(_URL_SUB_RANGE, timeout=_TIMEOUT)
+        resp = requests.get(_URL_SUB_RANGE, timeout=_TIMEOUT) # Kirim request GET ke URL /sub-issues/range/
         resp.raise_for_status()
         data = resp.json()
 
@@ -185,8 +166,10 @@ def get_jira_due_date_range():
                 datetime.strptime(latest_str,   '%Y-%m-%d').date(),
             )
     except requests.exceptions.ConnectionError:
+        # JIRA tidak bisa dijangkau (mati/offline)
         logger.warning("[get_jira_due_date_range] MockJira tidak bisa dijangkau.")
     except requests.exceptions.Timeout:
+        # JIRA terlalu lama merespon (> 30 detik)
         logger.warning("[get_jira_due_date_range] Request ke MockJira timeout.")
     except Exception as e:
         logger.warning(f"[get_jira_due_date_range] Error: {e}")
@@ -289,9 +272,11 @@ def sync_jira_data(user, start_date, end_date):
         # ── Step 1: Fetch sub-tickets ─────────────────────────────────────
         all_sub = ambil_semua_halaman(
             url=_URL_SUB,
-            params={'due_after': start_date, 'due_before': end_date, 'status': 'Completed'},
+            params={'due_after' : start_date, 
+                    'due_before': end_date, 
+                    'status'    : 'Completed'},
         )
-        result.total_fetched = len(all_sub)
+        sync_log.total_fetched      = result.total_fetched
         logger.info(f"[Sync #{sync_log.id}] Fetched {result.total_fetched} sub-tickets")
 
         if not all_sub:
@@ -326,6 +311,7 @@ def sync_jira_data(user, start_date, end_date):
         main_objects = _build_main_objects(main_map, sync_log)
         sub_objects  = _build_sub_objects(all_sub, main_map, sync_log)
         all_objects  = main_objects + sub_objects
+        result.total_fetched = len(main_objects) + len(sub_objects)  # Main + Sub
 
         # ── Step 4: Filter hanya ticket baru ──────────────────────────────
         existing_keys = set(
@@ -383,12 +369,16 @@ def sync_jira_data(user, start_date, end_date):
         else:
             sync_status = 'success'
 
-        sync_log.finished_at     = timezone.now()
-        sync_log.total_fetched   = result.total_fetched
-        sync_log.total_processed = result.total_processed
-        sync_log.total_skipped   = result.total_skipped
-        sync_log.total_errors    = 0
-        sync_log.status          = sync_status
+        sync_log.finished_at        = timezone.now()
+        sync_log.total_fetched      = result.total_fetched
+        sync_log.total_processed    = result.total_processed
+        sync_log.total_processed_main = result.total_processed_main
+        sync_log.total_processed_sub  = result.total_processed_sub
+        sync_log.total_skipped      = result.total_skipped
+        sync_log.total_skipped_main = len(main_keys_skipped)
+        sync_log.total_skipped_sub  = result.total_skipped_sub
+        sync_log.total_errors       = 0
+        sync_log.status             = sync_status
         sync_log.save()
         result.success = True
 

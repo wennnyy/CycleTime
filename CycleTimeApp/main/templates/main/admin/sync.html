@@ -76,11 +76,26 @@
 
     </div>
 
-    <button type="submit"
-            id="syncBtn"
-            class="bg-green-800 hover:bg-green-900 text-white px-6 py-2 rounded font-medium transition-colors duration-200">
-    ▶ Start Sync
-    </button>
+    <div class="flex items-center gap-3">
+        <button type="submit"
+                id="syncBtn"
+                class="bg-green-800 hover:bg-green-900 text-white px-6 py-2 rounded font-medium transition-colors duration-200">
+        ▶ Start Sync
+        </button>
+
+        {% if recent_sync_logs %}
+        <button type="button"
+                onclick="toggleSyncHistory()"
+                id="syncHistoryBtn"
+                class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded font-medium transition-colors duration-200">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            Sync History
+        </button>
+        {% endif %}
+    </div>
 
     <div id="progressSection" class="mt-4 hidden">
         <p class="text-sm text-gray-500 mb-2">Synchronizing data, please wait...</p>
@@ -321,6 +336,95 @@
 </div>
 {% endif %}
 
+{% if recent_sync_logs %}
+<!-- ── Sync History Modal ── -->
+<div id="syncHistoryModal"
+     class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-5xl mx-4 flex flex-col"
+         style="max-height: 85vh;">
+
+        <!-- Header -->
+        <div class="flex justify-between items-center px-6 py-4 border-b flex-shrink-0">
+            <div>
+                <h3 class="font-semibold text-gray-800">Sync History (Audit Trail)</h3>
+                <p class="text-xs text-gray-400 mt-0.5">Last 10 synchronization records</p>
+            </div>
+            <button onclick="closeSyncHistory()"
+                    class="text-gray-400 hover:text-gray-600 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none"
+                     viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Table (scrollable) -->
+        <div class="overflow-auto p-6">
+            <table class="w-full border text-sm">
+                <thead class="bg-gray-100">
+                    <tr>
+                        <th class="p-2 border" rowspan="2">ID</th>
+                        <th class="p-2 border" rowspan="2">Admin</th>
+                        <th class="p-2 border" rowspan="2">Started</th>
+                        <th class="p-2 border" rowspan="2">Finished</th>
+                        <th class="p-2 border" rowspan="2">Fetched<br><span class="font-normal text-gray-400">(Main+Sub)</span></th>
+                        <th class="p-2 border text-center" colspan="2">Processed</th>
+                        <th class="p-2 border text-center" colspan="2">Skipped</th>
+                        <th class="p-2 border" rowspan="2">Status</th>
+                    </tr>
+                    <tr>
+                        <th class="p-2 border text-green-700 font-medium text-xs">Main</th>
+                        <th class="p-2 border text-green-700 font-medium text-xs">Sub</th>
+                        <th class="p-2 border text-yellow-700 font-medium text-xs">Main</th>
+                        <th class="p-2 border text-yellow-700 font-medium text-xs">Sub</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in recent_sync_logs %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="p-2 border text-center">{{ log.id }}</td>
+                        <td class="p-2 border">{{ log.admin.username|default:"System" }}</td>
+                        <td class="p-2 border text-xs">{{ log.started_at|date:"d M Y H:i" }}</td>
+                        <td class="p-2 border text-xs">
+                            {% if log.finished_at %}{{ log.finished_at|date:"d M Y H:i" }}{% else %}-{% endif %}
+                        </td>
+                        <td class="p-2 border text-center">{{ log.total_fetched }}</td>
+                        <td class="p-2 border text-center text-green-600 font-semibold">{{ log.total_processed_main }}</td>
+                        <td class="p-2 border text-center text-green-600 font-semibold">{{ log.total_processed_sub }}</td>
+                        <td class="p-2 border text-center text-yellow-600 font-semibold">{{ log.total_skipped_main }}</td>
+                        <td class="p-2 border text-center text-yellow-600 font-semibold">{{ log.total_skipped_sub }}</td>
+                        <td class="p-2 border text-center">
+                            {% if log.status == 'success' %}
+                                <span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs font-semibold">Success</span>
+                            {% elif log.status == 'published' %}
+                                <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-semibold">Published</span>
+                            {% elif log.status == 'skipped' %}
+                                <span class="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-semibold">Skipped</span>
+                            {% elif log.status == 'running' %}
+                                <span class="px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs font-semibold">Running</span>
+                            {% else %}
+                                <span class="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-semibold">{{ log.status }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-6 py-3 border-t flex-shrink-0 flex justify-end">
+            <button onclick="closeSyncHistory()"
+                    class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded text-sm font-medium transition-colors duration-200">
+                Close
+            </button>
+        </div>
+
+    </div>
+</div>
+{% endif %}
+
 
 <!-- ── Flag Modal ── -->
 <div id="flagModal"
@@ -423,6 +527,23 @@ function updateRecords() {
 
 document.getElementById('startInput').addEventListener('change', updateRecords);
 document.getElementById('endInput').addEventListener('change',   updateRecords);
+
+// ── Sync History Modal ────────────────────────────────────────────────────────
+function toggleSyncHistory() {
+    document.getElementById('syncHistoryModal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden'; // cegah scroll background
+}
+
+function closeSyncHistory() {
+    document.getElementById('syncHistoryModal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+// Klik backdrop → tutup modal
+document.getElementById('syncHistoryModal')?.addEventListener('click', function(e) {
+    if (e.target === this) closeSyncHistory();
+});
+
 </script>
 
 {% endblock %}

@@ -30,10 +30,14 @@ class SyncLog(models.Model):
     started_at  = models.DateTimeField()
     finished_at = models.DateTimeField(null=True, blank=True)
 
-    total_fetched   = models.IntegerField(default=0)
-    total_processed = models.IntegerField(default=0)
-    total_skipped   = models.IntegerField(default=0)  # ticket yang di-skip karena sudah ada di DB
-    total_errors    = models.IntegerField(default=0)  # khusus errors
+    total_fetched           = models.IntegerField(default=0)
+    total_processed         = models.IntegerField(default=0)
+    total_processed_main    = models.IntegerField(default=0)
+    total_processed_sub     = models.IntegerField(default=0)
+    total_skipped           = models.IntegerField(default=0)  # ticket yang di-skip karena sudah ada di DB
+    total_skipped_main      = models.IntegerField(default=0)
+    total_skipped_sub       = models.IntegerField(default=0)
+    total_errors            = models.IntegerField(default=0)  # khusus errors
 
     status = models.CharField(max_length=50)
 
