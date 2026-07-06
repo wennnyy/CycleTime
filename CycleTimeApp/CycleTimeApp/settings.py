@@ -139,14 +139,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # ============================================================
 # MOCK JIRA API
 # ============================================================
-# MockJiraServer berjalan sebagai project Django terpisah
-# di port 8001. CycleTimeApp berkomunikasi via HTTP API.
-#
-# Jalankan MockJiraServer terlebih dahulu:
-#   cd /c/CycleTime/MockJiraServer
-#   python manage.py runserver 8001
-# ============================================================
-
 MOCK_JIRA_BASE_URL  = "http://127.0.0.1:8001/mock-jira/api"
 MOCK_JIRA_TIMEOUT   = 30   # detik
 MOCK_JIRA_PAGE_SIZE = 500  # item per halaman

@@ -16,10 +16,10 @@ import requests
 
 from django.conf           import settings
 from django.core.paginator import Paginator
-from django.db.models      import Avg, Count, Q
-from django.db.models.functions import ExtractYear
+from django.db.models      import Q
 from django.utils          import timezone
 
+# ReportLab = library untuk generate file PDF
 from reportlab.lib            import colors
 from reportlab.lib.pagesizes  import A4, landscape
 from reportlab.lib.styles     import ParagraphStyle
@@ -41,16 +41,17 @@ from main.utils         import (
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
+# Konfigurasi koneksi ke Mock JIRA Server (http://127.0.0.1:8001/mock-jira/api/)
 _BASE_URL       = settings.MOCK_JIRA_BASE_URL
 _TIMEOUT        = settings.MOCK_JIRA_TIMEOUT
 _PAGE_SIZE      = settings.MOCK_JIRA_PAGE_SIZE
-_URL_MAIN       = f"{_BASE_URL}/issues/"                # http://127.0.0.1:8001/mock-jira/api/issues/
-_URL_SUB        = f"{_BASE_URL}/sub-issues/"
-_URL_SUB_RANGE  = f"{_BASE_URL}/sub-issues/range/"      #Mengetahui tanggal paling awal dan paling akhir data yang ada di JIRA
+_URL_MAIN       = f"{_BASE_URL}/issues/"                # endpoint untuk ambil MAIN ticket
+_URL_SUB        = f"{_BASE_URL}/sub-issues/"            # endpoint untuk ambil SUB ticket
+_URL_SUB_RANGE  = f"{_BASE_URL}/sub-issues/range/"      # endpoint untuk cek rentang tanggal data yang tersedia di JIRA
 _META_KEYS      = frozenset({'total', 'page', 'page_size', 'total_pages'})
 
-API_BATCH_SIZE  = 50    # HTTP request batching
-DB_BATCH_SIZE   = 500   # bulk_create batching
+API_BATCH_SIZE  = 50    # jumlah ticket per batch request ke Mock JIRA API
+DB_BATCH_SIZE   = 500   # jumlah row per batch saat bulk insert ke database
 
 # ── PDF visual constants ───────────────────────────────────────────────────────
 _PG_COLORS = {
@@ -58,7 +59,7 @@ _PG_COLORS = {
     'QFP': '#111827', 'SOP': '#dc2626', 'TO':  '#374151',
     'Other': '#6b7280',
 }
-_FALLBACK_COLORS = [
+_FALLBACK_COLORS = [ 
     '#2563eb', '#16a34a', '#dc2626', '#d97706',
     '#7c3aed', '#0891b2', '#be185d', '#059669',
 ]
@@ -71,11 +72,6 @@ _TABLE_COLORS = {
     'gt_val':   colors.HexColor('#1e40af'),
     'sub_val':  colors.HexColor('#0369a1'),
 }
-
-_CHART_COLORS = [
-    '#2563eb', '#16a34a', '#dc2626', '#d97706', '#7c3aed', '#0891b2',
-    '#be185d', '#059669', '#ea580c', '#4338ca', '#0d9488', '#b45309', '#6d28d9',
-]
 
 
 # ======================================================
@@ -124,7 +120,7 @@ def ambil_main_tickets_by_keys(issue_keys):
 
 
 # ======================================================
-# QUERY: HITUNG Jumlah RECORDS TERSEDIA
+# QUERY: HITUNG Jumlah RECORDS TERSEDIA (Records Available)
 # ======================================================
 
 def hitung_available_records(start_date, end_date):
@@ -151,7 +147,9 @@ def hitung_available_records(start_date, end_date):
         return 0, f"Tidak bisa menghitung records: {str(e)}"
 
 def get_jira_due_date_range():
-    
+    """
+    Cek rentang tanggal (paling awal - paling akhir) dari SELURUH data yang ada di Mock JIRA.
+    """
     try:
         resp = requests.get(_URL_SUB_RANGE, timeout=_TIMEOUT) # Kirim request GET ke URL /sub-issues/range/
         resp.raise_for_status()
@@ -174,7 +172,7 @@ def get_jira_due_date_range():
     except Exception as e:
         logger.warning(f"[get_jira_due_date_range] Error: {e}")
 
-    return None
+    return None # kalau gagal/error, return None (bukan raise) supaya halaman tetap tampil
 
 # ======================================================
 # SERVICE: SYNC JIRA DATA
@@ -269,7 +267,7 @@ def sync_jira_data(user, start_date, end_date):
     )
 
     try:
-        # ── Step 1: Fetch sub-tickets ─────────────────────────────────────
+        # ── Step 1: Fetch sub-tickets  dengan due date─────────────────────────────────────
         all_sub = ambil_semua_halaman(
             url=_URL_SUB,
             params={'due_after' : start_date, 
@@ -433,25 +431,6 @@ def get_dashboard_filter_options():
     }
 
 
-def get_ct_analysis_filter_options():
-    published = get_published_syncs()
-
-    months_qs = RawTicket.objects.filter(
-        parent_key__isnull=False,
-        start_date__isnull=False,
-        cycle_time__isnull=False,
-        sync_log__in=published,
-    ).dates('start_date', 'month')
-
-    return {
-        'all_months':    sorted({f"{d.year}-{str(d.month).zfill(2)}" for d in months_qs}),
-        'all_platforms': sorted(set(PACKAGE_PLATFORM.values())),
-        'all_stages':    sorted({v[0] for v in PROCESS_GROUP.values()}),
-        'all_areas':     sorted({v[1] for v in PROCESS_GROUP.values()}),
-        'all_processes': sorted(PROCESS_GROUP.keys()),
-    }
-
-
 def _dedupe_latest_ticket_ids(qs):
     seen, unique_ids = set(), []
     for t in qs.values('id', 'ticket_key'):
@@ -519,88 +498,6 @@ def paginate_and_enrich_tickets(qs, page_number, per_page):
 
 
 # ======================================================
-# CHART DATA
-# ======================================================
-
-def get_chart_data():
-    published = get_published_syncs()
-
-    qs = RawTicket.objects.filter(
-        parent_key__isnull=False,
-        cycle_time__isnull=False,
-        platform__isnull=False,
-        sync_log__in=published,
-    ).exclude(platform='')
-
-    # Chart 1 — avg CT per platform
-    chart1 = {'labels': [], 'data': [], 'counts': []}
-    for row in qs.values('platform').annotate(avg_ct=Avg('cycle_time'), count=Count('id')).order_by('platform'):
-        chart1['labels'].append(row['platform'])
-        chart1['data'].append(round(row['avg_ct'], 2))
-        chart1['counts'].append(row['count'])
-
-    # Chart 2 — avg CT per platform per year
-    platform_year_map = {}
-    years_set = set()
-    for row in (
-        qs.annotate(year=ExtractYear('start_date'))
-          .filter(year__isnull=False)
-          .values('platform', 'year')
-          .annotate(avg_ct=Avg('cycle_time'))
-          .order_by('platform', 'year')
-    ):
-        p, y = row['platform'], str(row['year'])
-        years_set.add(y)
-        platform_year_map.setdefault(p, {})[y] = round(row['avg_ct'], 2)
-
-    years_sorted    = sorted(years_set)
-    platforms       = sorted(platform_year_map)
-    chart2_datasets = [
-        {
-            'label':           p,
-            'data':            [platform_year_map[p].get(y) for y in years_sorted],
-            'borderColor':     _CHART_COLORS[i % len(_CHART_COLORS)],
-            'backgroundColor': _CHART_COLORS[i % len(_CHART_COLORS)] + '33',
-            'tension':         0.3,
-            'fill':            False,
-        }
-        for i, p in enumerate(platforms)
-    ]
-    chart2 = {'labels': years_sorted, 'datasets': chart2_datasets}
-
-    # Chart 3 & 4 — avg CT per process per platform
-    process_platform_map = {}
-    for row in (
-        qs.filter(predefined_process__isnull=False)
-          .exclude(predefined_process='')
-          .values('platform', 'predefined_process')
-          .annotate(avg_ct=Avg('cycle_time'))
-          .order_by('platform', 'predefined_process')
-    ):
-        p, pr = row['platform'], row['predefined_process']
-        process_platform_map.setdefault(p, {})[pr] = round(row['avg_ct'], 2)
-
-    chart3 = {'platforms': sorted(process_platform_map), 'data': process_platform_map}
-    chart4 = {
-        'estimasi_data': process_platform_map,
-        'all_processes': sorted(
-            RawTicket.objects
-            .filter(predefined_process__isnull=False)
-            .exclude(predefined_process='')
-            .values_list('predefined_process', flat=True).distinct()
-        ),
-        'all_platforms': sorted(
-            RawTicket.objects
-            .filter(platform__isnull=False)
-            .exclude(platform='')
-            .values_list('platform', flat=True).distinct()
-        ),
-    }
-
-    return {'chart1': chart1, 'chart2': chart2, 'chart3': chart3, 'chart4': chart4}
-
-
-# ======================================================
 # CT ANALYSIS — private helpers
 # ======================================================
 
@@ -632,17 +529,6 @@ def _enrich_ct_rows(qs, f_platforms, f_stages, f_areas, force_monthly):
         })
 
     return enriched
-
-# ── Pivot 1 helpers ────────────────────────────────────────────────────────────
-def _mean(vals):
-    """Rata-rata sederhana, return None jika kosong."""
-    v = [x for x in vals if x is not None]
-    return round(sum(v) / len(v), 1) if v else None
-
-def _sum_nonnull(vals):
-    """Jumlahkan nilai non-None, return None jika semua None."""
-    v = [x for x in vals if x is not None]
-    return round(sum(v), 1) if v else None
 
 def _build_pivot1(enriched, col_keys, force_monthly):
     """

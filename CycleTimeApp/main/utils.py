@@ -106,38 +106,9 @@ def get_page_range(current, total_pages, window=2):
 
     return pages
 
-
-# ======================================================
-# MATH
-# ======================================================
-
-def median(values):
-    """
-    Median dari list of numbers.
-    Return: float | None
-    """
-    if not values:
-        return None
-    s   = sorted(values)
-    n   = len(s)
-    mid = n // 2
-    return (s[mid - 1] + s[mid]) / 2 if n % 2 == 0 else float(s[mid])
-
-
 # ======================================================
 # PDF UTILITIES
 # ======================================================
-
-def pdf_round_1(value):
-    """Round to 1 decimal place, None → None."""
-    return round(value, 1) if value is not None else None
-
-
-def pdf_average(values):
-    """Calculate average rounded to 1 decimal, empty list → None."""
-    return pdf_round_1(sum(values) / len(values)) if values else None
-
-
 def pdf_format_column_label(col_key, use_yearly):
     """Format column key untuk display di table header."""
     if use_yearly:

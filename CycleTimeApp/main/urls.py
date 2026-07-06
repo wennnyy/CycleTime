@@ -13,9 +13,6 @@ urlpatterns = [
     path('dashboard/management/', views.dashboard_management, name='dashboard_management'),
 
     # ── Admin: Sync ───────────────────────────────────────────────────────────
-    # FIX: path 'admin_sync' sebelumnya terduplikasi dua kali (baris 16 & 27).
-    # Duplikasi ini menyebabkan Django hanya mendaftarkan route pertama dan
-    # mengabaikan yang kedua — membuang-buang namespace dan membingungkan.
     path('dashboard/admin/sync/', views.admin_sync, name='admin_sync'),
 
     # ── Admin: Data Management ────────────────────────────────────────────────
@@ -43,13 +40,8 @@ urlpatterns = [
     # ── Management ────────────────────────────────────────────────────────────
     path('dashboard/management/reports/', views.management_reports, name='management_reports'),
 
-    # ── Shared API Endpoints ──────────────────────────────────────────────────
-    path('dashboard/chart-data/',        views.chart_data_api,      name='chart_data_api'),
-
     # ── Cycle Time Analysis ───────────────────────────────────────────────────
-    # FIX: ct_analysis_dashboard ada di views.py tapi TIDAK ADA URL-nya.
     # Tanpa URL ini, fungsi tersebut tidak dapat diakses sama sekali.
-    path('dashboard/ct-analysis/',       views.ct_analysis_dashboard, name='ct_analysis_dashboard'),
     path('dashboard/ct-analysis/download/pdf/', views.download_dashboard_pdf, name='download_dashboard_pdf'),
     # convenience routes so staff/management dashboards can call the same PDF generator
     path('dashboard/ct-analysis/data/',  views.ct_analysis_data,      name='ct_analysis_data'),

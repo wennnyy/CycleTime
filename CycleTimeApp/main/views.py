@@ -12,21 +12,20 @@ from django.contrib.auth.hashers import make_password
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
-from django.db.models import Avg, Count, Q, Min, Max
+from django.db.models import Avg, Q, Min, Max
 from django.db.models import Case, When, Value, IntegerField, Max as MaxId
 from django.core.paginator import Paginator
 from datetime import date, datetime
 
 from main.models import User, RawTicket, SyncLog, FlagHistory, ErrorTicket
-from main.process_groups import enrich_ticket, get_platform
+from main.process_groups import enrich_ticket
 from main.utils import hitung_cycle_time, get_page_range, format_date_range, role_required
 from main.services import (
     hitung_available_records, sync_jira_data,
     get_published_syncs, get_dashboard_filter_options,
     get_published_clean_ticket_queryset,
     paginate_and_enrich_tickets,
-    get_chart_data, compute_ct_analysis,
-    get_ct_analysis_filter_options, generate_pdf,
+    compute_ct_analysis,generate_pdf,
     get_jira_due_date_range,
 )
 
@@ -270,7 +269,7 @@ def admin_sync(request):
             .annotate(max_id=MaxId('id'))
             .values_list('max_id', flat=True)
         )
-
+        #menampilkan data error diawal
         qs = RawTicket.objects.filter(id__in=latest_ids).annotate(
             error_priority=Case(
                 When(cycle_time__lt=0,        then=Value(0)),
@@ -546,8 +545,7 @@ def _reports_view(request, template_name):
 def admin_reports(request):
     return _reports_view(request, 'main/admin/reports.html')
 
-
-@login_required
+#endpoint download report excel untuk semua role
 @login_required
 @role_required('admin', 'staff', 'management')
 def download_report_excel(request):
@@ -847,11 +845,6 @@ def staff_reports(request):
     return _reports_view(request, 'main/staff/reports.html')
 
 
-@login_required
-@role_required('management')
-
-
-
 # ======================================================
 # DASHBOARD MANAGEMENT
 # ======================================================
@@ -882,23 +875,10 @@ def management_reports(request):
     return _reports_view(request, 'main/management/reports.html')
 
 
-# ======================================================
-# CHART API
-# ======================================================
-@login_required
-def chart_data_api(request):
-    return JsonResponse(get_chart_data())
-
 
 # ======================================================
 # CYCLE TIME ANALYSIS DASHBOARD
 # ======================================================
-@login_required
-def ct_analysis_dashboard(request):
-    context = get_ct_analysis_filter_options()
-    return render(request, 'main/partials/ct_analysis.html', context)
-
-
 @login_required
 def ct_analysis_data(request):
     f_year      = request.GET.get('year', '').strip()
