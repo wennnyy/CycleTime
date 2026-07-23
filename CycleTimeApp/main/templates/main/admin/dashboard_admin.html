@@ -5,7 +5,7 @@
 <div class="text-right text-xs text-gray-500 bg-white px-3 py-2 rounded shadow-sm border mb-4">
     <p>Sync terakhir: <span class="font-medium">{{ last_sync.started_at|date:"d M Y, H:i" }}</span></p>
     <p>Status:
-        <span class="font-semibold {% if last_sync.status == 'success' %}text-green-600{% elif last_sync.status == 'failed' %}text-red-500{% else %}text-yellow-500{% endif %}">
+        <span class="font-semibold {% if last_sync.status == 'published' %}text-green-600{% elif last_sync.status == 'success' %}text-blue-600{% elif last_sync.status == 'failed' %}text-red-500{% else %}text-yellow-500{% endif %}">
             {{ last_sync.status|capfirst }}
         </span>
         &middot; {{ last_sync.total_processed }} tiket

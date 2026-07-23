@@ -45,9 +45,9 @@ logger = logging.getLogger(__name__)
 _BASE_URL       = settings.MOCK_JIRA_BASE_URL
 _TIMEOUT        = settings.MOCK_JIRA_TIMEOUT
 _PAGE_SIZE      = settings.MOCK_JIRA_PAGE_SIZE
-_URL_MAIN       = f"{_BASE_URL}/issues/"                # endpoint untuk ambil MAIN ticket
-_URL_SUB        = f"{_BASE_URL}/sub-issues/"            # endpoint untuk ambil SUB ticket
-_URL_SUB_RANGE  = f"{_BASE_URL}/sub-issues/range/"      # endpoint untuk cek rentang tanggal data yang tersedia di JIRA
+_URL_MAIN       = f"{_BASE_URL}/issues/"                # untuk ambil MAIN ticket
+_URL_SUB        = f"{_BASE_URL}/sub-issues/"            # untuk ambil SUB ticket
+_URL_SUB_RANGE  = f"{_BASE_URL}/sub-issues/range/"      # untuk cek rentang tanggal data yang tersedia di JIRA
 _META_KEYS      = frozenset({'total', 'page', 'page_size', 'total_pages'})
 
 API_BATCH_SIZE  = 50    # jumlah ticket per batch request ke Mock JIRA API
@@ -175,7 +175,7 @@ def get_jira_due_date_range():
     return None # kalau gagal/error, return None (bukan raise) supaya halaman tetap tampil
 
 # ======================================================
-# SERVICE: SYNC JIRA DATA
+# SERVICE: SYNC JIRA DATA - Transform
 # ======================================================
 
 class SyncResult:
@@ -204,7 +204,7 @@ class SyncResult:
 
 
 def _build_main_objects(main_map, sync_log):
-    """Bangun list RawTicket untuk main tickets."""
+    """Bangun list RawTicket untuk main tickets ke database."""
     objects = []
     for key, fields in main_map.items():
         status_raw = fields.get('status', '')
@@ -226,7 +226,7 @@ def _build_main_objects(main_map, sync_log):
 
 
 def _build_sub_objects(all_sub, main_map, sync_log):
-    """Bangun list RawTicket untuk sub-tickets."""
+    """Bangun list RawTicket untuk sub-tickets ke database."""
     objects = []
     for sub in all_sub:
         sf         = sub['fields']
@@ -296,7 +296,7 @@ def sync_jira_data(user, start_date, end_date):
             try:
                 main_map = {
                     m['key']: m['fields']
-                    for m in ambil_main_tickets_by_keys(all_parent_keys)
+                    for m in ambil_main_tickets_by_keys(all_parent_keys) #
                 }
                 logger.info(
                     f"[Sync #{sync_log.id}] Resolved "
@@ -311,7 +311,7 @@ def sync_jira_data(user, start_date, end_date):
         all_objects  = main_objects + sub_objects
         result.total_fetched = len(main_objects) + len(sub_objects)  # Main + Sub
 
-        # ── Step 4: Filter hanya ticket baru ──────────────────────────────
+        # ── Step 4: Filter hanya ticket baru (duplictae)──────────────────────────────
         existing_keys = set(
             RawTicket.objects
             .filter(ticket_key__in=[o.ticket_key for o in all_objects])
@@ -408,10 +408,11 @@ def sync_jira_data(user, start_date, end_date):
 # HELPERS FOR VIEWS
 # ======================================================
 
+#mengambil id sync log yg pub;ished
 def get_published_syncs():
     return SyncLog.objects.filter(status='published').values_list('id', flat=True)
 
-
+# filter dashboard
 def get_dashboard_filter_options():
     published = get_published_syncs()
 
@@ -439,7 +440,7 @@ def _dedupe_latest_ticket_ids(qs):
             unique_ids.append(t['id'])
     return unique_ids
 
-
+# mengambil data ticket yang clean
 def get_published_clean_ticket_queryset(query='', date_from='', date_to=''):
     qs = RawTicket.objects.filter(
         sync_log__in=get_published_syncs(),
@@ -545,7 +546,8 @@ def _build_pivot1(enriched, col_keys, force_monthly):
     raw = defaultdict(lambda: defaultdict(list))
     for r in enriched:
         raw[(r['pg'], r['stage'], r['area'], r['proc'])][gcol(r)].append(r['ct_raw'])
-
+    
+    # avg per kolom per process
     pivot = {}
     for (pg, stage, area, proc), col_data in raw.items():
         pivot.setdefault(pg, {}).setdefault(stage, {}).setdefault(area, {})

@@ -462,38 +462,55 @@ def admin_users(request):
 @role_required('admin')
 def add_user(request):
     if request.method == 'POST':
+        username = request.POST.get('username')
+        if User.objects.filter(username=username).exists():
+            messages.error(request, f"Username '{username}' is already registered.")
+            return redirect('admin_users')
+
         User.objects.create(
-            username=request.POST.get('username'),
+            username=username,
             email=request.POST.get('email'),
             role=request.POST.get('role'),
             password=make_password(request.POST.get('password'))
         )
-        messages.success(request, "User berhasil ditambahkan")
+        messages.success(request, "User Successfully Added")
     return redirect('admin_users')
 
 
 @login_required
 @role_required('admin')
 def edit_user(request, user_id):
-    user = User.objects.get(id=user_id)
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        messages.error(request, "User not found.")
+        return redirect('admin_users')
+
     if request.method == 'POST':
-        user.username = request.POST.get('username')
+        new_username = request.POST.get('username')
+        if User.objects.filter(username=new_username).exclude(id=user_id).exists():
+            messages.error(request, f"Username '{new_username}' already in use by another user.")
+            return redirect('admin_users')
+
+        user.username = new_username
         user.email    = request.POST.get('email')
         user.role     = request.POST.get('role')
         password      = request.POST.get('password')
         if password:
             user.password = make_password(password)
         user.save()
-        messages.success(request, "User berhasil diupdate")
+        messages.success(request, "User Successfully Updated")
     return redirect('admin_users')
-
 
 @login_required
 @role_required('admin')
 def delete_user(request, user_id):
     if request.method == 'POST':
-        User.objects.get(id=user_id).delete()
-        messages.success(request, "User berhasil dihapus")
+        try:
+            User.objects.get(id=user_id).delete()
+            messages.success(request, "User Successfully Deleted")
+        except User.DoesNotExist:
+            messages.error(request, "User not found.")
     return redirect('admin_users')
 
 
